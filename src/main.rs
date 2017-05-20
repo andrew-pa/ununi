@@ -20,7 +20,75 @@ use xml::reader::{EventReader, XmlEvent};
 mod vgu;
 use vgu::*;
 
+use winapi::*;
+use user32::*;
+use kernel32::*;
+use std::ptr::{null,null_mut};
+use std::mem::transmute;
+
+struct App {
+    win: Window,
+    factory: Factory,
+    rt: WindowRenderTarget
+}
+
+impl App {
+    fn new() -> App {
+        let win = Window::new((300, 300), Some(winproc)).expect("creating window");
+        let fac = Factory::new().expect("creating Direct2D factory");
+        let rt = WindowRenderTarget::new(fac.clone(), &win).expect("creating HwndRenderTarget");
+        App { win, factory: fac, rt }
+    }
+
+    fn paint(&mut self) {
+        unsafe {
+            let identity = D2D1_MATRIX_3X2_F{
+                matrix:[[1.0, 0.0],
+                [0.0, 1.0],
+                [0.0, 0.0]]
+            };
+
+            let white = D2D1_COLOR_F{r:0.7, g:0.3, b:1.0, a:1.0};
+            self.rt.BeginDraw();
+            self.rt.Clear(&white);
+            self.rt.SetTransform(&identity);
+            self.rt.EndDraw(null_mut(), null_mut());
+        }
+    }
+
+    fn resize(&mut self, w: u32, h: u32) {
+        self.rt.resize(w, h);
+    }
+}
+
+unsafe extern "system" fn winproc(win: HWND, msg: UINT, w: WPARAM, l: LPARAM) -> LRESULT {
+    let papp = GetWindowLongPtrW(win, 0);
+    if papp == 0 { return DefWindowProcW(win, msg, w, l); }
+    let app: &mut App = transmute(papp);
+    match msg {
+        WM_PAINT => {
+            app.paint(); 0
+        },
+        WM_SIZE => {
+            app.resize(GET_X_LPARAM(l) as u32, GET_Y_LPARAM(l) as u32); 0
+        },
+        WM_CREATE => {
+            SetWindowLongPtrW(win, 0, 0); 0
+        },
+        WM_DESTROY => {
+            PostQuitMessage(0); 1
+        }
+        _ => DefWindowProcW(win, msg, w, l)
+    }
+}
+
 fn main() {
+    let mut app = App::new();
+    unsafe { SetWindowLongPtrW(app.win.hndl, 0, transmute(&app)); }
+    Window::message_loop()
+}
+
+fn old_main() {
     let mut schb = SchemaBuilder::default();
     schb.add_text_field("name", TEXT | STORED);
     schb.add_text_field("blck", TEXT | STORED);
@@ -31,7 +99,7 @@ fn main() {
         Ok(ix) => ix,
         Err(tantivy::Error::PathDoesNotExist(_)) => {
             need_to_load = true;
-            Index::create(Path::new("./index"), schema.clone()).unwrap()
+            Index::create(Path::new("./index"), schema.clone()).expect("creating search index")
         },
         Err(e) => {
             println!("error: {:?}", e);
@@ -44,50 +112,47 @@ fn main() {
     let cpnf  = schema.get_field("codepnt").unwrap();
 
     if need_to_load {
-    let mut ixw = index.writer(50_000_000).unwrap();
-    
-
-    let f = File::open("D:\\andre\\Source\\ununi\\ucd.nounihan.grouped.xml").unwrap();
-    let fbr = BufReader::new(f);
-    let parser = EventReader::new(fbr);
-    let mut current_block_name = String::new();
-    let defatb = OwnedAttribute::new(OwnedName::local("NONE"), "0");
-    for e in parser {
-        match e {
-            Ok(XmlEvent::StartElement { name, attributes: atrib, .. }) => {
-                match name.local_name.as_str() {
-                    "group" => { 
-                        current_block_name = atrib.iter().find(|&a| a.name.local_name == "blk").unwrap_or(&defatb).value.clone();
-                    },
-                    "char" => {
-                        let mut doc = Document::default();
-                        doc.add_text(blckf, current_block_name.as_str());
-                        let mut itr = atrib.iter();
-                        doc.add_u64(cpnf, u64::from_str_radix(itr.find(|&a| a.name.local_name == "cp").unwrap_or(&defatb).value.as_str(), 16).unwrap());
-                        doc.add_text(namef, itr.find(|&a| a.name.local_name == "na" || a.name.local_name == "na1").unwrap_or(&defatb).value.as_str());
-                        ixw.add_document(doc);
+        let mut ixw = index.writer(50_000_000).unwrap();
+        let f = File::open("D:\\andre\\Source\\ununi\\ucd.nounihan.grouped.xml").expect("opening Unicode XML data");
+        let fbr = BufReader::new(f);
+        let parser = EventReader::new(fbr);
+        let mut current_block_name = String::new();
+        let defatb = OwnedAttribute::new(OwnedName::local("NONE"), "0");
+        for e in parser {
+            match e {
+                Ok(XmlEvent::StartElement { name, attributes: atrib, .. }) => {
+                    match name.local_name.as_str() {
+                        "group" => { 
+                            current_block_name = atrib.iter().find(|&a| a.name.local_name == "blk").unwrap_or(&defatb).value.clone();
+                        },
+                        "char" => {
+                            let mut doc = Document::default();
+                            doc.add_text(blckf, current_block_name.as_str());
+                            let mut itr = atrib.iter();
+                            doc.add_u64(cpnf, u64::from_str_radix(itr.find(|&a| a.name.local_name == "cp").unwrap_or(&defatb).value.as_str(), 16).unwrap());
+                            doc.add_text(namef, itr.find(|&a| a.name.local_name == "na" || a.name.local_name == "na1").unwrap_or(&defatb).value.as_str());
+                            ixw.add_document(doc);
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                }
-            },
-            Err(e) => { println!("error: {}", e); break; },
-            _ => {}
+                },
+                Err(e) => { println!("error: {}", e); break; },
+                _ => {}
+            }
         }
+        ixw.commit().expect("commiting index changed");
     }
 
-    ixw.commit().unwrap();
-    }
-
-    index.load_searchers().unwrap();
+    index.load_searchers().expect("loading searchers");
     let s = index.searcher();
     let qp = QueryParser::new(index.schema(), vec![namef, blckf]);
     println!("READY");
     loop {
         let mut qsr = String::new();
         ::std::io::stdin().read_line(&mut qsr);
-        let q = qp.parse_query(qsr.as_str().trim()).unwrap();
+        let q = qp.parse_query(qsr.as_str().trim()).expect("parsing search query");
         let mut tpc = TopCollector::with_limit(20);
-        s.search(&*q, &mut tpc).unwrap();
+        s.search(&*q, &mut tpc).expect("searching index");
         for da in tpc.docs() {
             let rd = s.doc(&da).unwrap();
             let cp = match rd.get_first(cpnf).unwrap() {

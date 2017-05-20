@@ -17,8 +17,8 @@ pub struct HResultError {
 }
 
 impl HResultError {
-    fn new(hr: HRESULT) -> HResultError { HResultError { res: hr } }
-    fn last_win32_error() -> HResultError {
+    pub fn new(hr: HRESULT) -> HResultError { HResultError { res: hr } }
+    pub fn last_win32_error() -> HResultError {
         unsafe {
             HResultError { res: GetLastError() as i32 }
         }
@@ -60,7 +60,7 @@ pub struct Window {
 }
 
 impl Window {
-    fn foreground_window() -> Option<Window> {
+    pub fn foreground_window() -> Option<Window> {
         let hndl = unsafe { GetForegroundWindow() };
         if hndl.is_null() {
             None
@@ -69,7 +69,7 @@ impl Window {
         }
     }
     fn from_handle(hndl: HWND) -> Window { Window { hndl } }
-    fn new(size: (i32, i32), prc: WNDPROC) -> Result<Window, HResultError> {
+    pub fn new(size: (i32, i32), prc: WNDPROC) -> Result<Window, HResultError> {
         unsafe {
             let module = GetModuleHandleW(null());
             let class = WNDCLASSEXW {
@@ -106,10 +106,20 @@ impl Window {
             }
         }
     }
-    fn client_rect(&self) -> RECT {
+    pub fn client_rect(&self) -> RECT {
         let mut rc: RECT = RECT{left:0,right:0,bottom:0,top:0};
         unsafe { GetClientRect(self.hndl, &mut rc); }
         rc
+    }
+
+    pub fn message_loop() {
+        unsafe {
+            let mut msg: MSG = uninitialized();
+            while GetMessageW(&mut msg, null_mut(), 0, 0) != 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
     }
 }
 
@@ -129,13 +139,13 @@ pub struct Com<T> {
 }
 
 impl<T> Com<T> {
-    fn from_ptr(p: *mut T) -> Com<T> {
+    pub fn from_ptr(p: *mut T) -> Com<T> {
         unsafe {
             Com { punk: p as *mut IUnknown, p: p }
         }
     }
 
-    fn query_interface<U>(&self, id: IID) -> Result<Com<U>, HResultError> {
+    pub fn query_interface<U>(&self, id: IID) -> Result<Com<U>, HResultError> {
         unsafe {
             let mut up: *mut U = uninitialized();
             (*self.punk).QueryInterface(&id, (&mut up as *mut *mut U) as *mut *mut c_void).into_result(|| Com { punk: self.punk, p: up })
@@ -189,10 +199,10 @@ extern "system" {
     ) -> HRESULT;
 }
 
-type Factory = Com<ID2D1Factory>;
+pub type Factory = Com<ID2D1Factory>;
 
 impl Factory {
-    fn new() -> Result<Com<ID2D1Factory>, HResultError> {
+    pub fn new() -> Result<Com<ID2D1Factory>, HResultError> {
         let null_opts: *const D2D1_FACTORY_OPTIONS = null();
         let mut fac: *mut ID2D1Factory = null_mut();
         unsafe {
@@ -201,10 +211,10 @@ impl Factory {
     }
 }
 
-type RenderTarget = Com<ID2D1RenderTarget>;
+pub type WindowRenderTarget = Com<ID2D1HwndRenderTarget>;
 
-impl RenderTarget {
-    fn new_from_window(mut fct: Factory, win: Window) -> Result<Com<ID2D1RenderTarget>, HResultError> {
+impl WindowRenderTarget {
+    pub fn new(mut fct: Factory, win: &Window) -> Result<WindowRenderTarget, HResultError> {
         let rc = win.client_rect();
         let size = D2D_SIZE_U { width: (rc.right-rc.left) as u32, height: (rc.bottom-rc.top) as u32 };
         let pxfmt = D2D1_PIXEL_FORMAT {
@@ -229,12 +239,17 @@ impl RenderTarget {
             fct.CreateHwndRenderTarget(&render_props, &hwnd_rp, &mut hrt).into_result(|| Com::from_ptr(transmute(hrt)))
         }
     }
+
+    pub fn resize(&mut self, w: u32, h: u32) {
+        let rs = D2D_SIZE_U { width: w, height: h };
+        unsafe { self.Resize(&rs); }
+    }
 }
 
-type Brush = Com<ID2D1Brush>;
+pub type Brush = Com<ID2D1Brush>;
 
 impl Brush {
-    fn solid_color(mut rt: RenderTarget, col: D2D1_COLOR_F) -> Result<Brush, HResultError> {
+    pub fn solid_color(mut rt: WindowRenderTarget, col: D2D1_COLOR_F) -> Result<Brush, HResultError> {
         unsafe {
             let mut brsh: *mut ID2D1SolidColorBrush = null_mut();
             rt.CreateSolidColorBrush(&col, null_mut(), &mut brsh).into_result(|| Com::from_ptr(transmute(brsh)))
@@ -265,7 +280,7 @@ mod tests {
         use ::vgu::*;
         let win = Window::new((200,200), Some(DefWindowProcW)).expect("creating Win32 window");
         let fac = Factory::new().expect("creating Direct2D factory");
-        let rt = RenderTarget::new_from_window(fac, win).expect("creating HwndRenderTarget");
+        let rt = WindowRenderTarget::new(fac, win).expect("creating HwndRenderTarget");
         let bc = Brush::solid_color(rt, D2D1_COLOR_F { r: 0.8, g: 0.5, b: 0.1, a: 1.0 }).expect("creating Solid Color Brush");
     }
 }
