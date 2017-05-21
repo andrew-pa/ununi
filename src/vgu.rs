@@ -92,8 +92,8 @@ impl Window {
                 WS_EX_COMPOSITED, //assuming we're going to use this with DirectX
                 &[65u16,0u16] as *const u16,
                 &[65u16,0u16] as *const u16,
-                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                CW_USEDEFAULT, CW_USEDEFAULT,
+                WS_VISIBLE | WS_POPUP,
+                300, 300,
                 size.0, size.1,
                 null_mut(), 
                 null_mut(), 
@@ -135,7 +135,7 @@ impl Drop for Window {
 
 pub struct Com<T> {
     pub punk: *mut IUnknown,
-    p: *mut T
+    pub p: *mut T
 }
 
 impl<T> Com<T> {
@@ -172,6 +172,12 @@ impl<T> Drop for Com<T> {
             unsafe { (*self.punk).Release(); }
         }
         self.p = null_mut();
+    }
+}
+
+impl<T> Into<*mut T> for Com<T> {
+    fn into(self) -> *mut T {
+        self.p
     }
 }
 
@@ -257,9 +263,39 @@ impl Brush {
     }
 }
 
+pub type TextFactory = Com<IDWriteFactory>;
+
+//"b859ee5a-d838-4b5b-a2e8-1adc.7d93db48"
+const UuidOfIDWriteFactory: IID = GUID { Data1: 0xb859ee5a, Data2: 0xd838, Data3: 0x4b5b, Data4: [0xa2,0xe8,0x1a,0xdc,0x7d,0x93,0xdb,0x48] }; 
+extern "system" {
+    fn DWriteCreateFactory(factoryType: DWRITE_FACTORY_TYPE, iid: REFIID, factory: *mut *mut IUnknown) -> HRESULT;
+}
+
+impl TextFactory {
+    pub fn new() -> Result<TextFactory, HResultError> {
+        unsafe {
+            let mut fac : *mut IDWriteFactory = uninitialized();
+            DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, &UuidOfIDWriteFactory, transmute(&fac)).into_result(|| Com::from_ptr(transmute(fac)))
+        }
+    }
+}
+
+pub type Font = Com<IDWriteTextFormat>;
+
+impl Font {
+    pub fn new(mut fac: TextFactory, name: String, weight: DWRITE_FONT_WEIGHT, style: DWRITE_FONT_STYLE, size: f32) -> Result<Font, HResultError> {
+        unsafe {
+            let mut txf: *mut IDWriteTextFormat = uninitialized();
+            fac.CreateTextFormat(name.encode_utf16().collect::<Vec<u16>>().as_ptr(), null_mut(), weight, style, DWRITE_FONT_STRETCH_NORMAL, size, 
+                                 [0u16].as_ptr(), &mut txf).into_result(|| Com::from_ptr(txf))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
+    use ::vgu::*;
     use winapi::*;
     use user32::*;
     use kernel32::*;
@@ -277,11 +313,21 @@ mod tests {
 
     #[test]
     fn create_d2d_window() {
-        use ::vgu::*;
         let win = Window::new((200,200), Some(DefWindowProcW)).expect("creating Win32 window");
         let fac = Factory::new().expect("creating Direct2D factory");
-        let rt = WindowRenderTarget::new(fac, win).expect("creating HwndRenderTarget");
+        let rt = WindowRenderTarget::new(fac, &win).expect("creating HwndRenderTarget");
         let bc = Brush::solid_color(rt, D2D1_COLOR_F { r: 0.8, g: 0.5, b: 0.1, a: 1.0 }).expect("creating Solid Color Brush");
+    }
+
+    #[test]
+    fn create_dwrite_factory() {
+        let fac = TextFactory::new().expect("creating DWrite factory");
+    }
+
+    #[test]
+    fn create_dwrite_font() {
+        let fac = TextFactory::new().expect("creating DWrite factory");
+        let fnt = Font::new(fac.clone(), String::from("Arial"), DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, 64.0).expect("creating Arial font");
     }
 }
 
