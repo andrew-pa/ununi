@@ -68,7 +68,7 @@ impl Window {
             Some(Window::from_handle(hndl))
         }
     }
-    fn from_handle(hndl: HWND) -> Window { Window { hndl } }
+    pub fn from_handle(hndl: HWND) -> Window { Window { hndl } }
     pub fn new(size: (i32, i32), prc: WNDPROC) -> Result<Window, HResultError> {
         unsafe {
             let module = GetModuleHandleW(null());
