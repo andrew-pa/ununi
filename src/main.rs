@@ -24,7 +24,7 @@ use winapi::*;
 use user32::*;
 use kernel32::*;
 use std::ptr::{null,null_mut};
-use std::mem::transmute;
+use std::mem::{uninitialized, transmute,size_of};
 
 struct App {
     win: Window,
@@ -39,7 +39,9 @@ struct App {
     namef: Field, blckf: Field, cpnf: Field,
     index: Index, 
     qpar: QueryParser, 
-    last_query: Option<Vec<Document>>
+    last_query: Option<Vec<Document>>,
+
+    foreground_window: Option<HWND>
 }
 
 fn build_index(schema: &Schema, index: &Index) {
@@ -59,6 +61,7 @@ fn build_index(schema: &Schema, index: &Index) {
                 match name.local_name.as_str() {
                     "group" => {
                         current_block_name = atrib.iter().find(|&a| a.name.local_name == "blk").unwrap_or(&defatb).value.clone();
+                        println!("processing {}", current_block_name);
                     },
                     "char" => {
                         let mut doc = Document::default();
@@ -107,7 +110,7 @@ impl App {
         App {
             win, factory: fac, rt, b, txf, fnt, query_string: String::from(""),
             schema: schema.clone(), namef, blckf, cpnf, index: index,
-            qpar: QueryParser::new(schema.clone(), vec![namef, blckf]), last_query: None
+            qpar: QueryParser::new(schema.clone(), vec![namef, blckf]), last_query: None, foreground_window: None
         }
     }
 
@@ -121,6 +124,7 @@ impl App {
             let mut r = D2D1_RECT_F{left: 8.0, right:512.0, top:8.0, bottom:32.0};
             self.rt.DrawRectangle(&r, self.b.p, 1.0, null_mut());
             let s = self.query_string.encode_utf16().collect::<Vec<u16>>();
+            r.left += 2.0;
             self.rt.DrawText(s.as_ptr(), s.len() as u32,
                              self.fnt.p, &r, self.b.p, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT, DWRITE_MEASURING_MODE_NATURAL);
             r.top += 28.0; r.bottom += 28.0;
@@ -163,6 +167,21 @@ impl App {
     }
 }
 
+#[repr(C)] #[derive(Clone,Copy,Debug)]
+struct GUITHREADINFO {
+    cbSize: DWORD,
+    flags: DWORD,
+    hwndActive: HWND,
+    hwndFocus: HWND,
+    hwndCapture: HWND,
+    hwndMenuOwner: HWND,
+    hwndMenuSize: HWND,
+    hwndCaret: HWND,
+    rcCaret: RECT
+}
+
+extern "system" { fn GetGUIThreadInfo(idThread: DWORD, lpgui: *mut GUITHREADINFO) -> BOOL; }
+
 unsafe extern "system" fn winproc(win: HWND, msg: UINT, w: WPARAM, l: LPARAM) -> LRESULT {
     let papp = GetWindowLongPtrW(win, 0);
     if papp == 0 { return DefWindowProcW(win, msg, w, l); }
@@ -175,7 +194,22 @@ unsafe extern "system" fn winproc(win: HWND, msg: UINT, w: WPARAM, l: LPARAM) ->
             app.resize(GET_X_LPARAM(l) as u32, GET_Y_LPARAM(l) as u32); 0
         },
         WM_HOTKEY => {
+            let mut gti: GUITHREADINFO = uninitialized();
+            gti.cbSize = size_of::<GUITHREADINFO>() as u32;
+            GetGUIThreadInfo(0, &mut gti);
+            app.foreground_window = if !gti.hwndFocus.is_null() { Some(gti.hwndFocus) } else { None };
+
+            let mut wstr = [0u16; 256];
+            GetWindowTextW(app.foreground_window.unwrap(), wstr.as_mut_ptr(), 256);
+            println!("fw: {} {:?}", String::from_utf16(&wstr).expect("str"), gti);
+
+            app.update_query(); 
+            
+            let mut frc: RECT = uninitialized();
+            GetWindowRect(gti.hwndFocus, &mut frc);
+            SetWindowPos(win, null_mut(), frc.left + gti.rcCaret.left, frc.top + gti.rcCaret.bottom+4, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
             ShowWindow(win, SW_RESTORE);
+            SetForegroundWindow(win);
             0
         },
         WM_CHAR => {
@@ -189,7 +223,27 @@ unsafe extern "system" fn winproc(win: HWND, msg: UINT, w: WPARAM, l: LPARAM) ->
         WM_KEYDOWN => {
             match w as i32 {
                 VK_BACK => { app.query_string.pop(); app.update_query(); 0 },
-                VK_ESCAPE => { ShowWindow(win, SW_HIDE); 0 },
+                VK_ESCAPE => { app.query_string = String::new(); ShowWindow(win, SW_HIDE); 0 },
+                VK_RETURN => {
+                    app.query_string = String::new();
+                    if app.foreground_window != None && app.last_query != None {
+                        let fw = app.foreground_window.unwrap();
+                        let lq = app.last_query.as_ref().unwrap();
+                        let cp = lq.iter().next().and_then(|d| d.get_first(app.cpnf)).and_then(|v| match v {
+                            &Value::U64(x) => Some(x),
+                            _ => None
+                        }).unwrap();
+                        let mut tbuf = [0u16, 2];
+                        let chb = (::std::char::from_u32(cp as u32).unwrap_or(' ')).encode_utf16(&mut tbuf);
+                        app.foreground_window = None;
+                        SetForegroundWindow(fw);
+                        for c in chb {
+                            PostMessageW(fw, WM_CHAR, *c as WPARAM, 1);
+                        }
+                    }
+                    ShowWindow(win, SW_HIDE);
+                    0
+                },
                 VK_PAUSE => { PostQuitMessage(0); 0 }
                 _ => 1
             }
@@ -208,7 +262,7 @@ fn main() {
     let mut app = App::new();
     unsafe {
         SetWindowLongPtrW(app.win.hndl, 0, transmute(&app));
-        RegisterHotKey(app.win.hndl, 0, 1, VK_F1 as u32); //shift + space
+        RegisterHotKey(app.win.hndl, 0, 1, VK_F1 as u32); //alt + f1
     }
     Window::message_loop()
 }
