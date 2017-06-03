@@ -30,10 +30,10 @@ struct App {
     win: Window,
     factory: Factory,
     rt: WindowRenderTarget,
-    b: Brush,
+    b: Brush, sel_b: Brush,
     txf: TextFactory,
     fnt: Font,
-    query_string: String,
+    query_string: String, sel_char: usize,
 
     schema: Schema,
     namef: Field, blckf: Field, cpnf: Field,
@@ -87,6 +87,7 @@ impl App {
         let fac = Factory::new().expect("creating Direct2D factory");
         let rt = WindowRenderTarget::new(fac.clone(), &win).expect("creating HwndRenderTarget");
         let b = Brush::solid_color(rt.clone(), D2D1_COLOR_F{r:0.9, g:0.9, b:0.9, a:1.0}).expect("creating solid color brush");
+        let sel_b = Brush::solid_color(rt.clone(), D2D1_COLOR_F{r:0.9, g:0.9, b:0.7, a:0.8}).expect("creating solid color brush");
         let txf = TextFactory::new().expect("creating DWrite factory");
         let fnt = Font::new(txf.clone(), String::from("Consolas"), 
                             DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, 16.0).expect("creating font");
@@ -108,7 +109,7 @@ impl App {
         };
         index.load_searchers().expect("loading searchers");
         App {
-            win, factory: fac, rt, b, txf, fnt, query_string: String::from(""),
+            win, factory: fac, rt, b, sel_b, txf, fnt, query_string: String::from(""), sel_char: 0,
             schema: schema.clone(), namef, blckf, cpnf, index: index,
             qpar: QueryParser::new(schema.clone(), vec![namef, blckf]), last_query: None, foreground_window: None
         }
@@ -130,7 +131,8 @@ impl App {
             r.top += 28.0; r.bottom += 28.0;
             match self.last_query {
                 Some(ref das) => {
-                    for rd in das {
+                    let sel_char = self.sel_char;
+                    for (rd,sel) in das.iter().zip((0..).map(|i| i == sel_char)) {
                         let cp = rd.get_first(self.cpnf).unwrap().u64_value();
                         let S = /*format!("[{:?}] {:?} @ {:?} = [{}]",
                                  rd.get_first(self.blckf).unwrap(), 
@@ -140,7 +142,9 @@ impl App {
                                 rd.get_first(self.blckf).unwrap().text());
                         let s = S.encode_utf16().collect::<Vec<u16>>();
                         self.rt.DrawText(s.as_ptr(), s.len() as u32,
-                             self.fnt.p, &r, self.b.p, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT, DWRITE_MEASURING_MODE_NATURAL);
+                             self.fnt.p, &r, self.b.p, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT | D2D1_DRAW_TEXT_OPTIONS_CLIP, DWRITE_MEASURING_MODE_NATURAL);
+
+                        if sel { self.rt.DrawRectangle(&r, self.sel_b.p, 1.0, null_mut()); }
                         r.top += 24.0; r.bottom += 24.0;
                     }
                 }, 
@@ -164,6 +168,7 @@ impl App {
         let s = self.index.searcher(); let mut tpc = TopCollector::with_limit(20);
         s.search(&*q, &mut tpc).expect("searching index");
         self.last_query = Some(tpc.docs().iter().map(|da| s.doc(&da).unwrap()).collect());
+        self.sel_char = 0;
     }
 }
 
@@ -223,13 +228,13 @@ unsafe extern "system" fn winproc(win: HWND, msg: UINT, w: WPARAM, l: LPARAM) ->
         WM_KEYDOWN => {
             match w as i32 {
                 VK_BACK => { app.query_string.pop(); app.update_query(); 0 },
-                VK_ESCAPE => { app.query_string = String::new(); ShowWindow(win, SW_HIDE); 0 },
+                VK_ESCAPE => { app.query_string = String::new(); app.sel_char = 0; ShowWindow(win, SW_HIDE); 0 },
                 VK_RETURN => {
                     app.query_string = String::new();
                     if app.foreground_window != None && app.last_query != None {
                         let fw = app.foreground_window.unwrap();
                         let lq = app.last_query.as_ref().unwrap();
-                        let cp = lq.iter().next().and_then(|d| d.get_first(app.cpnf)).and_then(|v| match v {
+                        let cp = lq.iter().nth(app.sel_char).and_then(|d| d.get_first(app.cpnf)).and_then(|v| match v {
                             &Value::U64(x) => Some(x),
                             _ => None
                         }).unwrap();
@@ -242,6 +247,14 @@ unsafe extern "system" fn winproc(win: HWND, msg: UINT, w: WPARAM, l: LPARAM) ->
                         }
                     }
                     ShowWindow(win, SW_HIDE);
+                    0
+                },
+                VK_UP => { if app.sel_char > 0 { app.sel_char -= 1; } 0 },
+                VK_DOWN => {
+                    match app.last_query.as_ref() {
+                        Some(q) => { if app.sel_char < q.len() { app.sel_char += 1; } },
+                        None => {}
+                    }
                     0
                 },
                 VK_PAUSE => { PostQuitMessage(0); 0 }
