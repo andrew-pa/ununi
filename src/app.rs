@@ -186,7 +186,7 @@ impl App {
 
         let mut frc: RECT = uninitialized();
         GetWindowRect(gti.hwndFocus, &mut frc);
-        SetWindowPos(self.win.hndl, null_mut(), frc.left + gti.rcCaret.left, frc.top + gti.rcCaret.bottom+4, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetWindowPos(self.win.hndl, transmute(-1 as isize), frc.left + gti.rcCaret.left, frc.top + gti.rcCaret.bottom+4, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
         ShowWindow(self.win.hndl, SW_RESTORE);
         SetForegroundWindow(self.win.hndl);
     }
