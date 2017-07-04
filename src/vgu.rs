@@ -1,4 +1,3 @@
-
 use winapi::*;
 use user32::*;
 use kernel32::*;
@@ -216,6 +215,26 @@ impl Factory {
         }
     }
 }
+/*
+pub type ColorF = D2D1_COLOR_F;
+impl ColorF {
+    fn rgba(r: f32, g: f32, b: f32, a: f32) -> ColorF {
+        D2D1_COLOR_F {r,g,b,a}
+    }
+}
+
+pub type RectF = D2D1_RECT_F;
+impl RectF {
+    fn xywh(x: f32, y: f32, w: f32, h: f32) -> RectF {
+        D2D1_RECT_F { left:x, right:x+w, top:y, bottom:y+h }
+    }
+    fn lrtb(l: f32, r: f32, t: f32, b: f32) -> RectF {
+        D2D1_RECT_F { left:l, right:r, top:t, bottom:b }
+    }
+}
+*/
+pub type Brush = Com<ID2D1Brush>;
+pub type Font = Com<IDWriteTextFormat>;
 
 pub type WindowRenderTarget = Com<ID2D1HwndRenderTarget>;
 
@@ -252,7 +271,6 @@ impl WindowRenderTarget {
     }
 }
 
-pub type Brush = Com<ID2D1Brush>;
 
 impl Brush {
     pub fn solid_color(mut rt: WindowRenderTarget, col: D2D1_COLOR_F) -> Result<Brush, HResultError> {
@@ -280,13 +298,13 @@ impl TextFactory {
     }
 }
 
-pub type Font = Com<IDWriteTextFormat>;
 
 impl Font {
     pub fn new(mut fac: TextFactory, name: String, weight: DWRITE_FONT_WEIGHT, style: DWRITE_FONT_STYLE, size: f32) -> Result<Font, HResultError> {
         unsafe {
             let mut txf: *mut IDWriteTextFormat = uninitialized();
-            fac.CreateTextFormat(name.encode_utf16().collect::<Vec<u16>>().as_ptr(), null_mut(), weight, style, DWRITE_FONT_STRETCH_NORMAL, size, 
+            fac.CreateTextFormat(name.encode_utf16().collect::<Vec<u16>>().as_ptr(), null_mut(), 
+                                 weight, style, DWRITE_FONT_STRETCH_NORMAL, size, 
                                  [0u16].as_ptr(), &mut txf).into_result(|| Com::from_ptr(txf))
         }
     }

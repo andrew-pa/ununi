@@ -59,7 +59,7 @@ fn build_index(schema: &Schema, index: &Index) {
     let cpnf  = schema.get_field("codepnt").unwrap();
 
     let mut ixw = index.writer(50_000_000).unwrap();
-    let f = File::open("D:\\andre\\Source\\ununi\\ucd.nounihan.grouped.xml").expect("opening Unicode XML data");
+    let f = File::open("./ucd.nounihan.grouped.xml").expect("opening Unicode XML data");
     let fbr = BufReader::new(f);
     let parser = EventReader::new(fbr);
     let mut current_block_name = String::new();
@@ -135,7 +135,7 @@ impl App {
         let s = self.query_string.encode_utf16().collect::<Vec<u16>>();
         r.left += 2.0;
         self.rt.DrawText(s.as_ptr(), s.len() as u32,
-        self.fnt.p, &r, self.b.p, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT, DWRITE_MEASURING_MODE_NATURAL);
+            self.fnt.p, &r, self.b.p, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT, DWRITE_MEASURING_MODE_NATURAL);
         r.top += 28.0; r.bottom += 28.0;
         match self.last_query {
             Some(ref das) => {
@@ -197,6 +197,37 @@ impl App {
             self.update_query();
         }
     }
+    unsafe fn send_char(&mut self) -> LRESULT {
+        self.query_string = String::new();
+        if self.foreground_window != None && self.last_query != None {
+            let fw = self.foreground_window.unwrap();
+            let lq = self.last_query.as_ref().unwrap();
+            let cp = lq.iter().nth(self.sel_char).and_then(|d| d.get_first(self.cpnf)).and_then(|v| match v {
+                &Value::U64(x) => Some(x),
+                _ => None
+            }).unwrap();
+
+            OpenClipboard(self.win.hndl);
+            EmptyClipboard();
+            let global_text = GlobalAlloc(0x0042, 6);
+            let mut tcopy: &mut [u16; 3] = transmute(GlobalLock(global_text));
+            (::std::char::from_u32(cp as u32).unwrap_or(' ')).encode_utf16(tcopy);
+            GlobalUnlock(global_text);
+
+            SetClipboardData(CF_UNICODETEXT, global_text);
+
+            CloseClipboard();
+
+            SetForegroundWindow(fw);
+            keybd_event(VK_CONTROL as u8, 0, 0, 0);
+            keybd_event(b'V', 0, 0, 0);
+            keybd_event(b'V', 0, KEYEVENTF_KEYUP, 0);
+            keybd_event(VK_CONTROL as u8, 0, KEYEVENTF_KEYUP, 0);
+            self.foreground_window = None;
+        }
+        ShowWindow(self.win.hndl, SW_HIDE);
+        0
+    }
     unsafe fn keydown(&mut self, w: WPARAM) -> LRESULT {
         match w as i32 {
             VK_BACK => {
@@ -208,26 +239,7 @@ impl App {
                 self.sel_char = 0;
                 ShowWindow(self.win.hndl, SW_HIDE); 0 
             },
-            VK_RETURN => {
-                self.query_string = String::new();
-                if self.foreground_window != None && self.last_query != None {
-                    let fw = self.foreground_window.unwrap();
-                    let lq = self.last_query.as_ref().unwrap();
-                    let cp = lq.iter().nth(self.sel_char).and_then(|d| d.get_first(self.cpnf)).and_then(|v| match v {
-                        &Value::U64(x) => Some(x),
-                        _ => None
-                    }).unwrap();
-                    let mut tbuf = [0u16, 2];
-                    let chb = (::std::char::from_u32(cp as u32).unwrap_or(' ')).encode_utf16(&mut tbuf);
-                    self.foreground_window = None;
-                    SetForegroundWindow(fw);
-                    for c in chb {
-                        PostMessageW(fw, WM_CHAR, *c as WPARAM, 1);
-                    }
-                }
-                ShowWindow(self.win.hndl, SW_HIDE);
-                0
-            },
+            VK_RETURN => self.send_char(),
             VK_UP => { if self.sel_char > 0 { self.sel_char -= 1; } 0 },
             VK_DOWN => {
                 match self.last_query.as_ref() {
