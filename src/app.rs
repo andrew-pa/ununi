@@ -50,7 +50,7 @@ pub struct App {
     qpar: QueryParser, 
     last_query: Option<Vec<Document>>,
 
-    foreground_window: Option<HWND>
+    foreground_window: Option<HWND>, ctrl_pressed: bool
 }
 
 fn build_index(schema: &Schema, index: &Index) {
@@ -120,7 +120,7 @@ impl App {
         App {
             win, factory: fac, rt, b, sel_b, txf, fnt, query_string: String::from(""), sel_char: 0,
             schema: schema.clone(), namef, blckf, cpnf, index: index,
-            qpar: QueryParser::new(schema.clone(), vec![namef, blckf]), last_query: None, foreground_window: None
+            qpar: QueryParser::new(schema.clone(), vec![namef, blckf]), last_query: None, foreground_window: None, ctrl_pressed: false
         }
     }
 
@@ -157,6 +157,9 @@ impl App {
                 }
             }, 
             None => {} 
+        }
+        if self.ctrl_pressed {
+            self.rt.DrawLine(D2D1_POINT_2F{x: 0.0, y:0.0}, D2D1_POINT_2F{x:800.0,y:0.0}, self.sel_b.p, 1.0, null_mut());
         }
         self.rt.EndDraw(null_mut(), null_mut());
     }
@@ -197,33 +200,48 @@ impl App {
             self.update_query();
         }
     }
-    unsafe fn send_char(&mut self) -> LRESULT {
+    unsafe fn send_char(&mut self, use_clipboard: bool) -> LRESULT {
         self.query_string = String::new();
         if self.foreground_window != None && self.last_query != None {
             let fw = self.foreground_window.unwrap();
             let lq = self.last_query.as_ref().unwrap();
-            let cp = lq.iter().nth(self.sel_char).and_then(|d| d.get_first(self.cpnf)).and_then(|v| match v {
+            let cp = match lq.iter().nth(self.sel_char).and_then(|d| d.get_first(self.cpnf)).and_then(|v| match v {
                 &Value::U64(x) => Some(x),
                 _ => None
-            }).unwrap();
+            }) {
+                Some(v) => v,
+                None => {
+                    SetForegroundWindow(fw);
+                    self.foreground_window = None;
+                    ShowWindow(self.win.hndl, SW_HIDE);
+                    return 0;
+                }
+            };
 
-            OpenClipboard(self.win.hndl);
-            EmptyClipboard();
-            let global_text = GlobalAlloc(0x0042, 6);
-            let mut tcopy: &mut [u16; 3] = transmute(GlobalLock(global_text));
-            (::std::char::from_u32(cp as u32).unwrap_or(' ')).encode_utf16(tcopy);
-            GlobalUnlock(global_text);
-
-            SetClipboardData(CF_UNICODETEXT, global_text);
-
-            CloseClipboard();
-
-            SetForegroundWindow(fw);
-            keybd_event(VK_CONTROL as u8, 0, 0, 0);
-            keybd_event(b'V', 0, 0, 0);
-            keybd_event(b'V', 0, KEYEVENTF_KEYUP, 0);
-            keybd_event(VK_CONTROL as u8, 0, KEYEVENTF_KEYUP, 0);
-            self.foreground_window = None;
+            if use_clipboard {
+                OpenClipboard(self.win.hndl);
+                EmptyClipboard();
+                let global_text = GlobalAlloc(0x0042, 6);
+                let mut tcopy: &mut [u16; 3] = transmute(GlobalLock(global_text));
+                (::std::char::from_u32(cp as u32).unwrap_or(' ')).encode_utf16(tcopy);
+                GlobalUnlock(global_text);
+                SetClipboardData(CF_UNICODETEXT, global_text);
+                CloseClipboard();
+                SetForegroundWindow(fw);
+                keybd_event(VK_CONTROL as u8, 0, 0, 0);
+                keybd_event(b'V', 0, 0, 0);
+                keybd_event(b'V', 0, KEYEVENTF_KEYUP, 0);
+                keybd_event(VK_CONTROL as u8, 0, KEYEVENTF_KEYUP, 0);
+                self.foreground_window = None;
+            } else {
+                let mut tbuf = [0u16, 2];
+                let chb = (::std::char::from_u32(cp as u32).unwrap_or(' ')).encode_utf16(&mut tbuf);
+                SetForegroundWindow(fw);
+                for c in chb {
+                    PostMessageW(fw, WM_CHAR, *c as WPARAM, 1);
+                }
+                self.foreground_window = None;
+            }
         }
         ShowWindow(self.win.hndl, SW_HIDE);
         0
@@ -239,7 +257,8 @@ impl App {
                 self.sel_char = 0;
                 ShowWindow(self.win.hndl, SW_HIDE); 0 
             },
-            VK_RETURN => self.send_char(),
+            VK_CONTROL => {self.ctrl_pressed = true; 0},
+            VK_RETURN => { let ctlp = self.ctrl_pressed; self.send_char(!ctlp) },
             VK_UP => { if self.sel_char > 0 { self.sel_char -= 1; } 0 },
             VK_DOWN => {
                 match self.last_query.as_ref() {
@@ -273,6 +292,12 @@ unsafe extern "system" fn winproc(win: HWND, msg: UINT, w: WPARAM, l: LPARAM) ->
         },
         WM_KEYDOWN => {
             app.keydown(w)
+        },
+        WM_KEYUP => {
+            match w as i32 {
+                VK_CONTROL => app.ctrl_pressed = false,
+                _ => {}
+            }; 0
         },
         WM_CREATE => {
             SetWindowLongPtrW(win, 0, 0); 0
