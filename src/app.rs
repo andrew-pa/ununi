@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::BufReader;
 
 use tantivy::Error as TError;
+use tantivy::ErrorKind as TErrorKind;
 use tantivy::Index;
 use tantivy::schema::*;
 use tantivy::collector::TopCollector;
@@ -107,7 +108,7 @@ impl App {
         let schema = schb.build();
         let index = match Index::open(Path::new("./index")) {
             Ok(ix) => ix,
-            Err(TError::PathDoesNotExist(_)) => {
+            Err(TError(TErrorKind::PathDoesNotExist(_), _)) => {
                 let ix = Index::create(Path::new("./index"), schema.clone()).expect("creating search index");
                 build_index(&schema, &ix);
                 ix
@@ -205,44 +206,39 @@ impl App {
         if self.foreground_window != None && self.last_query != None {
             let fw = self.foreground_window.unwrap();
             let lq = self.last_query.as_ref().unwrap();
-            let cp = match lq.iter().nth(self.sel_char).and_then(|d| d.get_first(self.cpnf)).and_then(|v| match v {
+            match lq.iter().nth(self.sel_char).and_then(|d| d.get_first(self.cpnf)).and_then(|v| match v {
                 &Value::U64(x) => Some(x),
                 _ => None
             }) {
-                Some(v) => v,
-                None => {
-                    SetForegroundWindow(fw);
-                    self.foreground_window = None;
-                    ShowWindow(self.win.hndl, SW_HIDE);
-                    return 0;
-                }
+                Some(cp) => {
+                    if use_clipboard {
+                        OpenClipboard(self.win.hndl);
+                        EmptyClipboard();
+                        let global_text = GlobalAlloc(0x0042, 6);
+                        let mut tcopy: &mut [u16; 3] = transmute(GlobalLock(global_text));
+                        (::std::char::from_u32(cp as u32).unwrap_or(' ')).encode_utf16(tcopy);
+                        GlobalUnlock(global_text);
+                        SetClipboardData(CF_UNICODETEXT, global_text);
+                        CloseClipboard();
+                        SetForegroundWindow(fw);
+                        keybd_event(VK_CONTROL as u8, 0, 0, 0);
+                        keybd_event(b'V', 0, 0, 0);
+                        keybd_event(b'V', 0, KEYEVENTF_KEYUP, 0);
+                        keybd_event(VK_CONTROL as u8, 0, KEYEVENTF_KEYUP, 0);
+                    } else {
+                        let mut tbuf = [0u16, 2];
+                        let chb = (::std::char::from_u32(cp as u32).unwrap_or(' ')).encode_utf16(&mut tbuf);
+                        SetForegroundWindow(fw);
+                        for c in chb {
+                            PostMessageW(fw, WM_CHAR, *c as WPARAM, 1);
+                        }
+                    }
+                },
+                None => { SetForegroundWindow(fw); },
             };
-
-            if use_clipboard {
-                OpenClipboard(self.win.hndl);
-                EmptyClipboard();
-                let global_text = GlobalAlloc(0x0042, 6);
-                let mut tcopy: &mut [u16; 3] = transmute(GlobalLock(global_text));
-                (::std::char::from_u32(cp as u32).unwrap_or(' ')).encode_utf16(tcopy);
-                GlobalUnlock(global_text);
-                SetClipboardData(CF_UNICODETEXT, global_text);
-                CloseClipboard();
-                SetForegroundWindow(fw);
-                keybd_event(VK_CONTROL as u8, 0, 0, 0);
-                keybd_event(b'V', 0, 0, 0);
-                keybd_event(b'V', 0, KEYEVENTF_KEYUP, 0);
-                keybd_event(VK_CONTROL as u8, 0, KEYEVENTF_KEYUP, 0);
-                self.foreground_window = None;
-            } else {
-                let mut tbuf = [0u16, 2];
-                let chb = (::std::char::from_u32(cp as u32).unwrap_or(' ')).encode_utf16(&mut tbuf);
-                SetForegroundWindow(fw);
-                for c in chb {
-                    PostMessageW(fw, WM_CHAR, *c as WPARAM, 1);
-                }
-                self.foreground_window = None;
-            }
+            self.foreground_window = None;
         }
+        self.ctrl_pressed = false;
         ShowWindow(self.win.hndl, SW_HIDE);
         0
     }
