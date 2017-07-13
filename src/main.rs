@@ -1,3 +1,4 @@
+#![windows_subsystem = "windows"]
 extern crate tantivy;
 extern crate xml;
 extern crate winapi;
