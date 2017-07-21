@@ -14,4 +14,5 @@ if target.get(2) == Some(&"windows") {
 fn main() {
     link("d2d1", true);
     link("dwrite", true);
+    link("shcore", true);
 }

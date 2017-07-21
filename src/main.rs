@@ -17,6 +17,7 @@ use std::mem::{uninitialized, transmute,size_of};
 
 
 fn main() {
+    unsafe { vgu::SetProcessDpiAwareness(1); }
     let mut app = app::App::new();
     unsafe {
         SetWindowLongPtrW(app.win.hndl, 0, transmute(&app));

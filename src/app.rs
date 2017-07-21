@@ -93,8 +93,11 @@ fn build_index(schema: &Schema, index: &Index) {
 
 impl App {
     pub fn new() -> App {
-        let win = Window::new((800, 800), Some(winproc)).expect("creating window");
-        let fac = Factory::new().expect("creating Direct2D factory");
+        let mut fac = Factory::new().expect("creating Direct2D factory");
+        let mut dpi: (f32, f32) = (0.0, 0.0);
+        unsafe { fac.GetDesktopDpi(&mut dpi.0, &mut dpi.1); }
+        let win = Window::new((((520.0) * (dpi.0 / 96.0)).ceil() as i32,
+                ((520.0) * (dpi.1 / 96.0)).ceil() as i32), Some(winproc)).expect("creating window");
         let rt = WindowRenderTarget::new(fac.clone(), &win).expect("creating HwndRenderTarget");
         let b = Brush::solid_color(rt.clone(), D2D1_COLOR_F{r:0.9, g:0.9, b:0.9, a:1.0}).expect("creating solid color brush");
         let sel_b = Brush::solid_color(rt.clone(), D2D1_COLOR_F{r:0.9, g:0.9, b:0.7, a:0.8}).expect("creating solid color brush");
@@ -131,6 +134,10 @@ impl App {
         self.rt.Clear(&bg);
         //self.rt.SetTransform(&identity);
 
+        { //draw frame
+            let mut r = D2D1_RECT_F{left: 0.0, right:520.0, top:0.0, bottom:520.0};
+            self.rt.DrawRectangle(&r, self.sel_b.p, 1.0, null_mut());
+        }
         let mut r = D2D1_RECT_F{left: 8.0, right:512.0, top:8.0, bottom:32.0};
         self.rt.DrawRectangle(&r, self.b.p, 1.0, null_mut());
         let s = self.query_string.encode_utf16().collect::<Vec<u16>>();

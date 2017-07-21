@@ -53,6 +53,9 @@ impl IntoResult<HResultError> for HRESULT {
     fn new(x: i32, y: i32, w: i32, h: i32) -> Rect { Rect { x, x+w, y, y+h } }
 }*/
 
+extern "system" {
+    pub fn SetProcessDpiAwareness(value: DWORD) -> HRESULT;
+}
 
 pub struct Window {
     pub hndl: HWND
