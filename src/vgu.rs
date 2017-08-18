@@ -238,6 +238,7 @@ impl RectF {
 */
 pub type Brush = Com<ID2D1Brush>;
 pub type Font = Com<IDWriteTextFormat>;
+pub type TextLayout = Com<IDWriteTextLayout>;
 
 pub type WindowRenderTarget = Com<ID2D1HwndRenderTarget>;
 
@@ -306,9 +307,41 @@ impl Font {
     pub fn new(mut fac: TextFactory, name: String, weight: DWRITE_FONT_WEIGHT, style: DWRITE_FONT_STYLE, size: f32) -> Result<Font, HResultError> {
         unsafe {
             let mut txf: *mut IDWriteTextFormat = uninitialized();
-            fac.CreateTextFormat(name.encode_utf16().collect::<Vec<u16>>().as_ptr(), null_mut(), 
+            let mut wname = name.encode_utf16().collect::<Vec<u16>>();
+            wname.push(0u16);
+            wname.push(0u16);
+            fac.CreateTextFormat(wname.as_ptr(), null_mut(), 
                                  weight, style, DWRITE_FONT_STRETCH_NORMAL, size, 
                                  [0u16].as_ptr(), &mut txf).into_result(|| Com::from_ptr(txf))
+        }
+    }
+}
+
+impl TextLayout {
+    pub fn new(mut fac: TextFactory, text: &str, f: &Font, width: f32, height: f32) -> Result<TextLayout, Box<Error>> {
+        use std::mem::transmute;
+        unsafe {
+            let mut lo: *mut IDWriteTextLayout = uninitialized();
+            let mut txd = text.encode_utf16().collect::<Vec<u16>>();
+            txd.push(0u16);
+            txd.push(0u16);
+            fac.CreateTextLayout(txd.as_ptr(), txd.len() as UINT32, f.p, width, height, &mut lo)
+                .into_result(|| Com::from_ptr(transmute(lo))).map_err(Into::into)
+        }
+    }
+    pub fn bounds(&self) -> D2D1_RECT_F {
+        unsafe {
+            let mut metrics: DWRITE_TEXT_METRICS = uninitialized();
+            (*self.p).GetMetrics(&mut metrics);
+            D2D1_RECT_F { left: metrics.left, top: metrics.top, right: metrics.left+metrics.width, bottom: metrics.top+metrics.height }
+        }
+    }
+    pub fn char_bounds(&self, index: usize) -> D2D1_RECT_F {
+        unsafe {
+            let mut ht: DWRITE_HIT_TEST_METRICS = uninitialized();
+            let (mut x, mut y) = (0.0, 0.0);
+            (*self.p).HitTestTextPosition(index as u32, 0, &mut x, &mut y, &mut ht);
+            D2D1_RECT_F { left: x, top: y, right: x+ht.width, bottom: y+ht.height }
         }
     }
 }

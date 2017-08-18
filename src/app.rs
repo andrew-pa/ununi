@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::fs;
 use std::fs::File;
 use std::io::BufReader;
 
@@ -20,6 +21,16 @@ use user32::*;
 use kernel32::*;
 use std::ptr::{null,null_mut};
 use std::mem::{uninitialized, transmute,size_of};
+
+/* Things left to do
+ * + Make install not wack (automated)
+ * + Rustfmt & manual refactor
+ * + Better Error handling
+ * + Recently used list
+ * + Proper DPI handling (esp wrt multi-mon)
+ * ✓ Cursor in search box (maybe a magnifying glass to hint that's the search box too?)
+ * + Restore clipboard after hijack
+ */
 
 #[repr(C)] #[derive(Clone,Copy,Debug)]
 struct GUITHREADINFO {
@@ -43,7 +54,7 @@ pub struct App {
     b: Brush, sel_b: Brush,
     txf: TextFactory,
     fnt: Font,
-    query_string: String, sel_char: usize,
+    query_string: String, sel_char: usize, cursor: usize,
 
     schema: Schema,
     namef: Field, blckf: Field, cpnf: Field,
@@ -112,6 +123,7 @@ impl App {
         let index = match Index::open(Path::new("./index")) {
             Ok(ix) => ix,
             Err(TError(TErrorKind::PathDoesNotExist(_), _)) => {
+                fs::create_dir("./index").expect("create index directory");
                 let ix = Index::create(Path::new("./index"), schema.clone()).expect("creating search index");
                 build_index(&schema, &ix);
                 ix
@@ -122,7 +134,7 @@ impl App {
         };
         index.load_searchers().expect("loading searchers");
         App {
-            win, factory: fac, rt, b, sel_b, txf, fnt, query_string: String::from(""), sel_char: 0,
+            win, factory: fac, rt, b, sel_b, txf, fnt, query_string: String::from(""), sel_char: 0, cursor: 0,
             schema: schema.clone(), namef, blckf, cpnf, index: index,
             qpar: QueryParser::new(schema.clone(), vec![namef, blckf]), last_query: None, foreground_window: None, ctrl_pressed: false
         }
@@ -138,22 +150,29 @@ impl App {
             let mut r = D2D1_RECT_F{left: 0.0, right:520.0, top:0.0, bottom:520.0};
             self.rt.DrawRectangle(&r, self.sel_b.p, 1.0, null_mut());
         }
+
+        // draw the query 'textbox'
+        let query_layout = TextLayout::new(self.txf.clone(), &self.query_string, &self.fnt, 512.0, 32.0).expect("create query string layout");
         let mut r = D2D1_RECT_F{left: 8.0, right:512.0, top:8.0, bottom:32.0};
         self.rt.DrawRectangle(&r, self.b.p, 1.0, null_mut());
         let s = self.query_string.encode_utf16().collect::<Vec<u16>>();
-        r.left += 2.0;
-        self.rt.DrawText(s.as_ptr(), s.len() as u32,
-            self.fnt.p, &r, self.b.p, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT, DWRITE_MEASURING_MODE_NATURAL);
+        r.left += 2.0; r.top += 2.0;
+        self.rt.DrawTextLayout(D2D1_POINT_2F{x: r.left, y: r.top}, query_layout.p, self.b.p, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+        let mut cb = query_layout.char_bounds(self.cursor);
+        cb.left += r.left; cb.top += r.top;
+        cb.right += r.left; cb.bottom += r.top;
+        if cb.left == cb.right { cb.right += 8.0; }
+        self.rt.FillRectangle(&cb, self.sel_b.p);
+
+
+        // draw the query results
         r.top += 28.0; r.bottom += 28.0;
         match self.last_query {
             Some(ref das) => {
                 let sel_char = self.sel_char;
                 for (rd,sel) in das.iter().zip((0..).map(|i| i == sel_char)) {
                     let cp = rd.get_first(self.cpnf).unwrap().u64_value();
-                    let S = /*format!("[{:?}] {:?} @ {:?} = [{}]",
-                              rd.get_first(self.blckf).unwrap(), 
-                              rd.get_first(self.namef).unwrap(), cp, ::std::char::from_u32(cp as u32).unwrap_or(' '));*/
-                    format!("{}: {} - {}", ::std::char::from_u32(cp as u32).unwrap_or(' '),
+                    let S = format!("{}: {} - {}", ::std::char::from_u32(cp as u32).unwrap_or(' '),
                             rd.get_first(self.namef).unwrap().text(),
                             rd.get_first(self.blckf).unwrap().text());
                     let s = S.encode_utf16().collect::<Vec<u16>>();
@@ -204,7 +223,8 @@ impl App {
     unsafe fn char_event(&mut self, w: u16) {
         let s = String::from_utf16(&[w]).unwrap();
         if !s.chars().next().unwrap().is_control() {
-            self.query_string += &s;
+            self.query_string.insert_str(self.cursor, &s);
+            self.cursor+=s.len();
             self.update_query();
         }
     }
@@ -252,12 +272,15 @@ impl App {
     unsafe fn keydown(&mut self, w: WPARAM) -> LRESULT {
         match w as i32 {
             VK_BACK => {
-                self.query_string.pop();
+                if self.cursor == self.query_string.len()  { self.query_string.pop(); }
+                else { self.query_string.remove(self.cursor); }
+                self.cursor-=1;
                 self.update_query(); 0
             },
             VK_ESCAPE => { 
                 self.query_string = String::new();
                 self.sel_char = 0;
+                self.cursor = 0;
                 ShowWindow(self.win.hndl, SW_HIDE); 0 
             },
             VK_CONTROL => {self.ctrl_pressed = true; 0},
@@ -270,6 +293,8 @@ impl App {
                 }
                 0
             },
+            VK_LEFT => { if self.cursor > 0 { self.cursor -= 1; } 0 },
+            VK_RIGHT => { if self.cursor < self.query_string.len() { self.cursor += 1; } 0 },
             VK_PAUSE => { PostQuitMessage(0); 0 }
             _ => 1
         }
