@@ -224,12 +224,12 @@ impl App {
         let s = String::from_utf16(&[w]).unwrap();
         if !s.chars().next().unwrap().is_control() {
             self.query_string.insert_str(self.cursor, &s);
-            self.cursor+=s.len();
+            self.cursor+=1;
             self.update_query();
         }
     }
     unsafe fn send_char(&mut self, use_clipboard: bool) -> LRESULT {
-        self.query_string = String::new();
+        self.query_string = String::new(); self.cursor = 0;
         if self.foreground_window != None && self.last_query != None {
             let fw = self.foreground_window.unwrap();
             let lq = self.last_query.as_ref().unwrap();
@@ -272,10 +272,11 @@ impl App {
     unsafe fn keydown(&mut self, w: WPARAM) -> LRESULT {
         match w as i32 {
             VK_BACK => {
+                if self.cursor == 0 { 0 } else {
                 if self.cursor == self.query_string.len()  { self.query_string.pop(); }
                 else { self.query_string.remove(self.cursor); }
                 self.cursor-=1;
-                self.update_query(); 0
+                self.update_query(); 0 }
             },
             VK_ESCAPE => { 
                 self.query_string = String::new();

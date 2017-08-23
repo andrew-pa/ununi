@@ -14,8 +14,6 @@ use kernel32::*;
 use std::ptr::{null,null_mut};
 use std::mem::{uninitialized, transmute,size_of};
 
-
-
 fn main() {
     unsafe { vgu::SetProcessDpiAwareness(1); }
     let mut app = app::App::new();
