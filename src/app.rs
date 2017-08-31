@@ -1,9 +1,9 @@
 use std::path::Path;
 use std::fs;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::BufReader;
 use std::error::Error;
-use std::io::{Error as IOError, ErrorKind as IOErrorKind};
+use std::io::{Cursor, Error as IOError, ErrorKind as IOErrorKind, copy, Seek, SeekFrom};
 
 use tantivy::Error as TError;
 use tantivy::ErrorKind as TErrorKind;
@@ -27,7 +27,7 @@ use std::mem::{uninitialized, transmute,size_of};
 /* Things left to do
  * + Make install not wack (automated)
  * + Rustfmt & manual refactor
- * + Better Error handling
+ * ✓ Better Error handling
  * + Recently used list
  * + Proper DPI handling (esp wrt multi-mon)
  * ✓ Cursor in search box (maybe a magnifying glass to hint that's the search box too?)
@@ -73,18 +73,31 @@ fn build_index(schema: &Schema, index: &Index) -> Result<(), Box<Error>> {
     let cpnf  = schema.get_field("codepnt").unwrap();
 
     let mut ixw = index.writer(50_000_000)?;
-    let f = match File::open("./ucd.nounihan.grouped.xml") {
+    let fbr = BufReader::new(match File::open("./ucd.nounihan.grouped.xml") {
         Ok(f) => f,
         Err(e) => match e.kind() {
             IOErrorKind::NotFound => {
-                return Err(Box::new(e));
                 // download latest UCD xml
-                File::open("./ucd.nounihan.grouped.xml")?
+                use curl::easy::Easy as Curl;
+                let mut curl = Curl::new();
+                let mut buffer = Vec::new();
+                curl.url("http://www.unicode.org/Public/UCD/latest/ucdxml/ucd.nounihan.grouped.zip")?;
+                {
+                    let mut transfer = curl.transfer(); 
+                    transfer.write_function(|data| { buffer.extend_from_slice(data); Ok(data.len()) })?;
+                    transfer.perform()?;
+                }
+                use zip::read::*;
+                let mut zip = ZipArchive::new(Cursor::new(&buffer))?;
+                let mut archf = zip.by_index(0)?; // Unicode archives only have 1 file in them
+                let mut f = OpenOptions::new().read(true).write(true).truncate(true).create(true).open("./ucd.nounihan.grouped.xml")?;
+                copy(&mut archf, &mut f)?;
+                f.seek(SeekFrom::Start(0));
+                f
             },
             _ => return Err(Box::new(e))
         }
-    };//.expect("opening Unicode XML data");
-    let fbr = BufReader::new(f);
+    });//.expect("opening Unicode XML data");
     let parser = EventReader::new(fbr);
     let mut current_block_name = String::new();
     let defatb = OwnedAttribute::new(OwnedName::local("NONE"), "0");
@@ -138,7 +151,10 @@ impl App {
             Err(TError(TErrorKind::PathDoesNotExist(_), _)) => {
                 fs::create_dir("./index")?;//.expect("create index directory");
                 let ix = Index::create(Path::new("./index"), schema.clone())?;//.expect("creating search index");
-                build_index(&schema, &ix);
+                if let Err(e) = build_index(&schema, &ix) {
+                   fs::remove_dir_all("./index")?;
+                   return Err(e);
+                }
                 ix
             },
             Err(e) => {
