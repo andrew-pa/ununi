@@ -2,6 +2,8 @@ use std::path::Path;
 use std::fs;
 use std::fs::File;
 use std::io::BufReader;
+use std::error::Error;
+use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 
 use tantivy::Error as TError;
 use tantivy::ErrorKind as TErrorKind;
@@ -65,13 +67,23 @@ pub struct App {
     foreground_window: Option<HWND>, ctrl_pressed: bool
 }
 
-fn build_index(schema: &Schema, index: &Index) {
+fn build_index(schema: &Schema, index: &Index) -> Result<(), Box<Error>> {
     let namef = schema.get_field("name").unwrap();
     let blckf = schema.get_field("blck").unwrap();
     let cpnf  = schema.get_field("codepnt").unwrap();
 
-    let mut ixw = index.writer(50_000_000).unwrap();
-    let f = File::open("./ucd.nounihan.grouped.xml").expect("opening Unicode XML data");
+    let mut ixw = index.writer(50_000_000)?;
+    let f = match File::open("./ucd.nounihan.grouped.xml") {
+        Ok(f) => f,
+        Err(e) => match e.kind() {
+            IOErrorKind::NotFound => {
+                return Err(Box::new(e));
+                // download latest UCD xml
+                File::open("./ucd.nounihan.grouped.xml")?
+            },
+            _ => return Err(Box::new(e))
+        }
+    };//.expect("opening Unicode XML data");
     let fbr = BufReader::new(f);
     let parser = EventReader::new(fbr);
     let mut current_block_name = String::new();
@@ -95,26 +107,27 @@ fn build_index(schema: &Schema, index: &Index) {
                     _ => {}
                 }
             },
-            Err(e) => { println!("error: {}", e); break; },
+            Err(e) => { return Err(Box::new(e)); },
             _ => {}
         }
     }
-    ixw.commit().expect("commiting index changed");
+    ixw.commit()?;//.expect("commiting index changed");
+    Ok(())
 }
 
 impl App {
-    pub fn new() -> App {
-        let mut fac = Factory::new().expect("creating Direct2D factory");
+    pub fn new() -> Result<App, Box<Error>> {
+        let mut fac = Factory::new()?;//.expect("creating Direct2D factory");
         let mut dpi: (f32, f32) = (0.0, 0.0);
         unsafe { fac.GetDesktopDpi(&mut dpi.0, &mut dpi.1); }
         let win = Window::new((((520.0) * (dpi.0 / 96.0)).ceil() as i32,
-                ((520.0) * (dpi.1 / 96.0)).ceil() as i32), Some(winproc)).expect("creating window");
-        let rt = WindowRenderTarget::new(fac.clone(), &win).expect("creating HwndRenderTarget");
-        let b = Brush::solid_color(rt.clone(), D2D1_COLOR_F{r:0.9, g:0.9, b:0.9, a:1.0}).expect("creating solid color brush");
-        let sel_b = Brush::solid_color(rt.clone(), D2D1_COLOR_F{r:0.9, g:0.9, b:0.7, a:0.8}).expect("creating solid color brush");
+                ((520.0) * (dpi.1 / 96.0)).ceil() as i32), Some(winproc))?;//.expect("creating window");
+        let rt = WindowRenderTarget::new(fac.clone(), &win)?;//.expect("creating HwndRenderTarget");
+        let b = Brush::solid_color(rt.clone(), D2D1_COLOR_F{r:0.9, g:0.9, b:0.9, a:1.0})?;//.expect("creating solid color brush");
+        let sel_b = Brush::solid_color(rt.clone(), D2D1_COLOR_F{r:0.9, g:0.9, b:0.7, a:0.8})?;//.expect("creating solid color brush");
         let txf = TextFactory::new().expect("creating DWrite factory");
         let fnt = Font::new(txf.clone(), String::from("Consolas"), 
-                            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, 16.0).expect("creating font");
+                            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, 16.0)?;//.expect("creating font");
         let mut schb = SchemaBuilder::default();
         let namef = schb.add_text_field("name", TEXT | STORED);
         let blckf = schb.add_text_field("blck", TEXT | STORED);
@@ -123,21 +136,21 @@ impl App {
         let index = match Index::open(Path::new("./index")) {
             Ok(ix) => ix,
             Err(TError(TErrorKind::PathDoesNotExist(_), _)) => {
-                fs::create_dir("./index").expect("create index directory");
-                let ix = Index::create(Path::new("./index"), schema.clone()).expect("creating search index");
+                fs::create_dir("./index")?;//.expect("create index directory");
+                let ix = Index::create(Path::new("./index"), schema.clone())?;//.expect("creating search index");
                 build_index(&schema, &ix);
                 ix
             },
             Err(e) => {
-                panic!("creating index: {:?}", e);
+                return Err(Box::new(e));//panic!("creating index: {:?}", e);
             }
         };
-        index.load_searchers().expect("loading searchers");
-        App {
+        index.load_searchers()?;//.expect("loading searchers");
+        Ok(App {
             win, factory: fac, rt, b, sel_b, txf, fnt, query_string: String::from(""), sel_char: 0, cursor: 0,
             schema: schema.clone(), namef, blckf, cpnf, index: index,
             qpar: QueryParser::new(schema.clone(), vec![namef, blckf]), last_query: None, foreground_window: None, ctrl_pressed: false
-        }
+        })
     }
 
     unsafe fn paint(&mut self) {
