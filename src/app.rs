@@ -32,6 +32,7 @@ use std::mem::{uninitialized, transmute,size_of};
  * + Proper DPI handling (esp wrt multi-mon)
  * ✓ Cursor in search box (maybe a magnifying glass to hint that's the search box too?)
  * + Restore clipboard after hijack
+ * + Configuration file? basically hotkey??? colors perhaps
  */
 
 #[repr(C)] #[derive(Clone,Copy,Debug)]
@@ -92,7 +93,7 @@ fn build_index(schema: &Schema, index: &Index) -> Result<(), Box<Error>> {
                 let mut archf = zip.by_index(0)?; // Unicode archives only have 1 file in them
                 let mut f = OpenOptions::new().read(true).write(true).truncate(true).create(true).open("./ucd.nounihan.grouped.xml")?;
                 copy(&mut archf, &mut f)?;
-                f.seek(SeekFrom::Start(0));
+                f.seek(SeekFrom::Start(0))?;
                 f
             },
             _ => return Err(Box::new(e))
@@ -257,47 +258,47 @@ impl App {
             self.update_query();
         }
     }
-    unsafe fn send_char(&mut self, use_clipboard: bool) -> LRESULT {
+
+    unsafe fn send_char(&mut self, fw: HWND, cp: char, use_clipboard: bool) {
+        if use_clipboard {
+            OpenClipboard(self.win.hndl);
+            EmptyClipboard();
+            let global_text = GlobalAlloc(0x0042, 6);
+            let mut tcopy: &mut [u16; 3] = transmute(GlobalLock(global_text));
+            cp.encode_utf16(tcopy);
+            GlobalUnlock(global_text);
+            SetClipboardData(CF_UNICODETEXT, global_text);
+            CloseClipboard();
+            SetForegroundWindow(fw);
+            keybd_event(VK_CONTROL as u8, 0, 0, 0);
+            keybd_event(b'V', 0, 0, 0);
+            keybd_event(b'V', 0, KEYEVENTF_KEYUP, 0);
+            keybd_event(VK_CONTROL as u8, 0, KEYEVENTF_KEYUP, 0);
+        } else {
+            let mut tbuf = [0u16, 2];
+            let chb = cp.encode_utf16(&mut tbuf);
+            SetForegroundWindow(fw);
+            for c in chb {
+                PostMessageW(fw, WM_CHAR, *c as WPARAM, 1);
+            }
+        }
+    }
+
+    unsafe fn send_selected_char(&mut self, use_clipboard: bool) -> LRESULT {
         self.query_string = String::new(); self.cursor = 0;
         if self.foreground_window != None && self.last_query != None {
             let fw = self.foreground_window.unwrap();
-            let lq = self.last_query.as_ref().unwrap();
-            match lq.iter().nth(self.sel_char).and_then(|d| d.get_first(self.cpnf)).and_then(|v| match v {
-                &Value::U64(x) => Some(x),
-                _ => None
-            }) {
-                Some(cp) => {
-                    if use_clipboard {
-                        OpenClipboard(self.win.hndl);
-                        EmptyClipboard();
-                        let global_text = GlobalAlloc(0x0042, 6);
-                        let mut tcopy: &mut [u16; 3] = transmute(GlobalLock(global_text));
-                        (::std::char::from_u32(cp as u32).unwrap_or(' ')).encode_utf16(tcopy);
-                        GlobalUnlock(global_text);
-                        SetClipboardData(CF_UNICODETEXT, global_text);
-                        CloseClipboard();
-                        SetForegroundWindow(fw);
-                        keybd_event(VK_CONTROL as u8, 0, 0, 0);
-                        keybd_event(b'V', 0, 0, 0);
-                        keybd_event(b'V', 0, KEYEVENTF_KEYUP, 0);
-                        keybd_event(VK_CONTROL as u8, 0, KEYEVENTF_KEYUP, 0);
-                    } else {
-                        let mut tbuf = [0u16, 2];
-                        let chb = (::std::char::from_u32(cp as u32).unwrap_or(' ')).encode_utf16(&mut tbuf);
-                        SetForegroundWindow(fw);
-                        for c in chb {
-                            PostMessageW(fw, WM_CHAR, *c as WPARAM, 1);
-                        }
-                    }
-                },
-                None => { SetForegroundWindow(fw); },
-            };
+            let cp = self.last_query.as_ref()
+                .and_then(|lq| lq[self.sel_char].get_first(self.cpnf).map(Value::u64_value))
+                .and_then(|cp| ::std::char::from_u32(cp as u32)); 
+            self.send_char(fw, cp.expect("obtain char from query"), use_clipboard);
             self.foreground_window = None;
         }
         self.ctrl_pressed = false;
         ShowWindow(self.win.hndl, SW_HIDE);
         0
     }
+
     unsafe fn keydown(&mut self, w: WPARAM) -> LRESULT {
         match w as i32 {
             VK_BACK => {
@@ -314,7 +315,7 @@ impl App {
                 ShowWindow(self.win.hndl, SW_HIDE); 0 
             },
             VK_CONTROL => {self.ctrl_pressed = true; 0},
-            VK_RETURN => { let ctlp = self.ctrl_pressed; self.send_char(!ctlp) },
+            VK_RETURN => { let ctlp = self.ctrl_pressed; self.send_selected_char(!ctlp) },
             VK_UP => { if self.sel_char > 0 { self.sel_char -= 1; } 0 },
             VK_DOWN => {
                 match self.last_query.as_ref() {

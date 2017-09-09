@@ -10,7 +10,6 @@ use std::mem::{size_of, uninitialized, transmute};
 use std::ffi::*;
 use std::ffi::OsString;
 
-#[derive(Debug)]
 pub struct HResultError {
     res: HRESULT
 }
@@ -28,20 +27,33 @@ impl Error for HResultError {
     fn description(&self) -> &str { "Windows error" }
 }
 
+impl fmt::Debug for HResultError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "HRESULT 0x{:x} {:?}", self.res, self.res)
+    }
+}
+
 impl fmt::Display for HResultError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "HRESULT 0x{:x} {:?}", self.res, self.res)
     }
 }
 
-trait IntoResult<E> {
+pub trait IntoResult<E> {
     fn into_result<T, F: FnOnce() -> T>(self, f: F) -> Result<T, E>; 
+    fn ok(self) -> Result<(), HResultError>;
 }
 
 impl IntoResult<HResultError> for HRESULT {
     fn into_result<T, F: FnOnce() -> T>(self, f: F) -> Result<T, HResultError> {
         match self {
             S_OK => Ok(f()),
+            v => Err(HResultError::new(v))
+        }
+    }
+    fn ok(self) -> Result<(), HResultError> {
+        match self {
+            S_OK => Ok(()),
             v => Err(HResultError::new(v))
         }
     }
@@ -357,7 +369,7 @@ mod tests {
     #[test]
     #[ignore] //mutex with create_d2d_window
     fn create_window() {
-        let win = ::Window::new((200,200), Some(DefWindowProcW)).expect("creating Win32 window");
+        let win = ::vgu::Window::new((200,200), Some(DefWindowProcW)).expect("creating Win32 window");
     }
 
     #[test]
