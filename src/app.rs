@@ -328,10 +328,18 @@ impl App {
         match w as i32 {
             VK_BACK => {
                 if self.cursor == 0 { 0 } else {
-                if self.cursor == self.query_string.len()  { self.query_string.pop(); }
-                else { self.query_string.remove(self.cursor); }
-                self.cursor-=1;
-                self.update_query(); 0 }
+                    self.cursor-=1;
+                    if self.cursor == self.query_string.len()  { self.query_string.pop(); }
+                    else { self.query_string.remove(self.cursor); }
+                    self.update_query(); 0
+                }
+            },
+            VK_DELETE => {
+                if self.cursor == 0 { self.query_string.clear(); 0 } else {
+                    if self.cursor == self.query_string.len()  { self.cursor-=1; self.query_string.pop(); }
+                    else { self.query_string.remove(self.cursor); }
+                    self.update_query(); 0
+                }
             },
             VK_ESCAPE => { 
                 self.query_string = String::new();
