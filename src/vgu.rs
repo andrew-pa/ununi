@@ -7,8 +7,6 @@ use std::ops;
 use std::error::Error;
 use std::ptr::{null_mut, null};
 use std::mem::{size_of, uninitialized, transmute};
-use std::ffi::*;
-use std::ffi::OsString;
 
 pub struct HResultError {
     res: HRESULT
@@ -74,14 +72,7 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn foreground_window() -> Option<Window> {
-        let hndl = unsafe { GetForegroundWindow() };
-        if hndl.is_null() {
-            None
-        } else {
-            Some(Window::from_handle(hndl))
-        }
-    }
+    
     pub fn from_handle(hndl: HWND) -> Window { Window { hndl } }
     pub fn new(size: (i32, i32), prc: WNDPROC) -> Result<Window, HResultError> {
         unsafe {
@@ -106,7 +97,7 @@ impl Window {
                 WS_EX_COMPOSITED, //assuming we're going to use this with DirectX
                 &[65u16,0u16] as *const u16,
                 &[65u16,0u16] as *const u16,
-                WS_VISIBLE | WS_POPUP,
+                WS_POPUP,
                 300, 300,
                 size.0, size.1,
                 null_mut(), 
@@ -154,9 +145,7 @@ pub struct Com<T> {
 
 impl<T> Com<T> {
     pub fn from_ptr(p: *mut T) -> Com<T> {
-        unsafe {
-            Com { punk: p as *mut IUnknown, p: p }
-        }
+        Com { punk: p as *mut IUnknown, p: p }
     }
 
     pub fn query_interface<U>(&self, id: IID) -> Result<Com<U>, HResultError> {
@@ -308,7 +297,7 @@ extern "system" {
 impl TextFactory {
     pub fn new() -> Result<TextFactory, HResultError> {
         unsafe {
-            let mut fac : *mut IDWriteFactory = uninitialized();
+            let fac : *mut IDWriteFactory = uninitialized();
             DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, &UuidOfIDWriteFactory, transmute(&fac)).into_result(|| Com::from_ptr(transmute(fac)))
         }
     }

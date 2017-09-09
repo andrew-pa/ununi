@@ -7,6 +7,7 @@ extern crate kernel32;
 extern crate advapi32;
 extern crate curl;
 extern crate zip;
+extern crate toml;
 
 mod vgu;
 mod app;
@@ -15,14 +16,29 @@ use winapi::*;
 use user32::*;
 use kernel32::*;
 use advapi32::*;
-use std::ptr::{null,null_mut};
-use std::mem::{uninitialized, transmute,size_of};
-use vgu::IntoResult;
+use std::ptr::{null_mut};
+use std::mem::{uninitialized, transmute};
+use std::io::{Read, ErrorKind as IOErrorKind};
+use std::env;
+use toml::Value as TomlValue;
+
+fn display_error<E: ::std::error::Error>(e: &E) {
+    let mut text = format!("Error: {}", e).encode_utf16().collect::<Vec<u16>>();
+    text.push(0); text.push(0);
+    unsafe { MessageBoxW(null_mut(), text.as_ptr(), null_mut(), MB_ICONERROR) };
+}
 
 fn main() {
     unsafe {
         vgu::SetProcessDpiAwareness(1);
     }
+
+    // check to see if %APPDATA% directory exists, if not create it, then change directories there
+    let appdata_path = ::std::path::Path::new(&env::var("APPDATA").expect("%APPDATA% env var")).join("ununi");
+    if !appdata_path.exists() {
+        ::std::fs::create_dir_all(&appdata_path).expect("create %APPDATA%\\ununi directory");
+    }
+    env::set_current_dir(appdata_path).expect("change directory into %APPDATA%\\ununi");
 
     // check to see if running with flag /S
     if !::std::env::args().any(|s| s == "/S") {
@@ -46,7 +62,28 @@ fn main() {
         }
     }
 
-    let mut app = match app::App::new() {
+    let config = match ::std::fs::File::open("config.toml") {
+        Ok(mut f) => {
+            let mut config_text = String::new();
+            f.read_to_string(&mut config_text);
+            match config_text.parse::<TomlValue>() {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    display_error(&e);
+                    return;
+                }
+            }
+        },
+        Err(e) => match e.kind() {
+            IOErrorKind::NotFound => None,
+            _ => {
+                display_error(&e);
+                return;
+            }
+        }
+    };
+
+    let mut app = match app::App::new(&config) {
         Ok(v) => v,
         Err(e) => {
             let mut text = format!("Error: {}", e).encode_utf16().collect::<Vec<u16>>();
@@ -57,7 +94,22 @@ fn main() {
     };
     unsafe {
         SetWindowLongPtrW(app.win.hndl, 0, transmute(&app));
-        RegisterHotKey(app.win.hndl, 0, 1, VK_F1 as u32); //alt + f1
+
+        // default is alt+f1
+        let hotkey_table = config.as_ref().and_then(|c| c.get("hotkey"));
+        let hotkey_mod = hotkey_table.and_then(|c| c.get("mod"))
+            .and_then(TomlValue::as_str)
+            .map_or(1, |v| match v {
+                "alt" => 1,
+                "ctrl" => 2,
+                "shift" => 4,
+                "windows" => 8,
+                _ => 1
+            });
+        let hotkey_key = hotkey_table.and_then(|c| c.get("key"))
+            .and_then(TomlValue::as_integer)
+            .map_or(VK_F1 as u32, |v| v as u32);
+        RegisterHotKey(app.win.hndl, 0, hotkey_mod, hotkey_key);
     }
     vgu::Window::message_loop()
 }

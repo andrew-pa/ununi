@@ -3,7 +3,7 @@ use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::BufReader;
 use std::error::Error;
-use std::io::{Cursor, Error as IOError, ErrorKind as IOErrorKind, copy, Seek, SeekFrom};
+use std::io::{Cursor, ErrorKind as IOErrorKind, copy, Seek, SeekFrom};
 
 use tantivy::Error as TError;
 use tantivy::ErrorKind as TErrorKind;
@@ -21,21 +21,24 @@ use vgu::*;
 use winapi::*;
 use user32::*;
 use kernel32::*;
-use std::ptr::{null,null_mut};
+use std::ptr::{null_mut};
 use std::mem::{uninitialized, transmute,size_of};
 
+use toml::Value as TomlValue;
+
 /* Things left to do
- * + refactor, fix warnings - v0.5
  * + Restore clipboard after hijack - on demand, v0.6
- * + Configuration file: hotkey, colors perhaps - v0.6
  * + Recently used list - v0.7+
  * + Proper DPI handling (esp wrt multi-mon) - v0.7+
+ * ✓ refactor, fix warnings - v0.5
+ * ✓ Configuration file: hotkey, colors perhaps - v0.5
  * ✓ Make install not wack (automated)
  * ✓ Better Error handling
  * ✓ Cursor in search box (maybe a magnifying glass to hint that's the search box too?)
  */
 
 #[repr(C)] #[derive(Clone,Copy,Debug)]
+#[allow(non_snake_case)]
 struct GUITHREADINFO {
     cbSize: DWORD,
     flags: DWORD,
@@ -59,13 +62,14 @@ pub struct App {
     fnt: Font,
     query_string: String, sel_char: usize, cursor: usize,
 
-    schema: Schema,
     namef: Field, blckf: Field, cpnf: Field,
     index: Index, 
     qpar: QueryParser, 
     last_query: Option<Vec<Document>>,
 
-    foreground_window: Option<HWND>, ctrl_pressed: bool
+    foreground_window: Option<HWND>, ctrl_pressed: bool,
+
+    background_color: D2D1_COLOR_F
 }
 
 fn build_index(schema: &Schema, index: &Index) -> Result<(), Box<Error>> {
@@ -129,16 +133,37 @@ fn build_index(schema: &Schema, index: &Index) -> Result<(), Box<Error>> {
     Ok(())
 }
 
+fn color_from_value(tv: &TomlValue, a: f32) -> Option<D2D1_COLOR_F> {
+    tv.as_array().and_then(|v|
+        v[0].as_float()
+            .and_then(|r| v[1].as_float()
+                              .and_then(|g| v[2].as_float()
+                                                .map(|b| D2D1_COLOR_F{r: r as f32, g: g as f32, b: b as f32, a: a}))))
+}
+
 impl App {
-    pub fn new() -> Result<App, Box<Error>> {
+    pub fn new(config: &Option<TomlValue>) -> Result<App, Box<Error>> {
         let mut fac = Factory::new()?;//.expect("creating Direct2D factory");
         let mut dpi: (f32, f32) = (0.0, 0.0);
         unsafe { fac.GetDesktopDpi(&mut dpi.0, &mut dpi.1); }
         let win = Window::new((((520.0) * (dpi.0 / 96.0)).ceil() as i32,
                 ((520.0) * (dpi.1 / 96.0)).ceil() as i32), Some(winproc))?;//.expect("creating window");
         let rt = WindowRenderTarget::new(fac.clone(), &win)?;//.expect("creating HwndRenderTarget");
-        let b = Brush::solid_color(rt.clone(), D2D1_COLOR_F{r:0.9, g:0.9, b:0.9, a:1.0})?;//.expect("creating solid color brush");
-        let sel_b = Brush::solid_color(rt.clone(), D2D1_COLOR_F{r:0.9, g:0.9, b:0.7, a:0.8})?;//.expect("creating solid color brush");
+
+        let (main_color, sel_color, bg_color) = {
+            let colors = config.as_ref().and_then(|c| c.get("colors"));
+            (colors.as_ref().and_then(|c| c.get("main"))
+                                   .and_then(|v| color_from_value(v, 1.0))
+                                   .unwrap_or(D2D1_COLOR_F{r:0.9, g:0.9, b:0.9, a:1.0}),
+             colors.as_ref().and_then(|c| c.get("highlight"))
+                                   .and_then(|v| color_from_value(v, 0.8))
+                                   .unwrap_or(D2D1_COLOR_F{r:0.9, g:0.8, b:0.6, a:0.8}),
+             colors.as_ref().and_then(|c| c.get("background"))
+                .and_then(|v| color_from_value(v,1.0)).unwrap_or(D2D1_COLOR_F{r:0.1, g:0.1, b:0.1, a:1.0}))
+        };
+        
+        let b = Brush::solid_color(rt.clone(), main_color)?;//.expect("creating solid color brush");
+        let sel_b = Brush::solid_color(rt.clone(), sel_color)?;//.expect("creating solid color brush");
         let txf = TextFactory::new().expect("creating DWrite factory");
         let fnt = Font::new(txf.clone(), String::from("Consolas"), 
                             DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, 16.0)?;//.expect("creating font");
@@ -153,8 +178,8 @@ impl App {
                 fs::create_dir("./index")?;//.expect("create index directory");
                 let ix = Index::create(Path::new("./index"), schema.clone())?;//.expect("creating search index");
                 if let Err(e) = build_index(&schema, &ix) {
-                   fs::remove_dir_all("./index")?;
-                   return Err(e);
+                    fs::remove_dir_all("./index")?;
+                    return Err(e);
                 }
                 ix
             },
@@ -165,15 +190,16 @@ impl App {
         index.load_searchers()?;//.expect("loading searchers");
         Ok(App {
             win, factory: fac, rt, b, sel_b, txf, fnt, query_string: String::from(""), sel_char: 0, cursor: 0,
-            schema: schema.clone(), namef, blckf, cpnf, index: index,
-            qpar: QueryParser::new(schema.clone(), vec![namef, blckf]), last_query: None, foreground_window: None, ctrl_pressed: false
+            namef, blckf, cpnf, index: index,
+            qpar: QueryParser::new(schema.clone(), vec![namef, blckf]),
+            background_color: bg_color,
+            last_query: None, foreground_window: None, ctrl_pressed: false
         })
     }
 
     unsafe fn paint(&mut self) {
-        let bg = D2D1_COLOR_F{r:0.1, g:0.1, b:0.1, a:1.0};
         self.rt.BeginDraw();
-        self.rt.Clear(&bg);
+        self.rt.Clear(&self.background_color);
         //self.rt.SetTransform(&identity);
 
         { //draw frame
@@ -185,7 +211,6 @@ impl App {
         let query_layout = TextLayout::new(self.txf.clone(), &self.query_string, &self.fnt, 512.0, 32.0).expect("create query string layout");
         let mut r = D2D1_RECT_F{left: 8.0, right:512.0, top:8.0, bottom:32.0};
         self.rt.DrawRectangle(&r, self.b.p, 1.0, null_mut());
-        let s = self.query_string.encode_utf16().collect::<Vec<u16>>();
         r.left += 2.0; r.top += 2.0;
         self.rt.DrawTextLayout(D2D1_POINT_2F{x: r.left, y: r.top}, query_layout.p, self.b.p, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
         let mut cb = query_layout.char_bounds(self.cursor);
@@ -202,11 +227,11 @@ impl App {
                 let sel_char = self.sel_char;
                 for (rd,sel) in das.iter().zip((0..).map(|i| i == sel_char)) {
                     let cp = rd.get_first(self.cpnf).unwrap().u64_value();
-                    let S = format!("{}: {} - {}", ::std::char::from_u32(cp as u32).unwrap_or(' '),
+                    let entry = format!("{}: {} - {}", ::std::char::from_u32(cp as u32).unwrap_or(' '),
                             rd.get_first(self.namef).unwrap().text(),
                             rd.get_first(self.blckf).unwrap().text());
-                    let s = S.encode_utf16().collect::<Vec<u16>>();
-                    self.rt.DrawText(s.as_ptr(), s.len() as u32,
+                    let entry16 = entry.encode_utf16().collect::<Vec<u16>>();
+                    self.rt.DrawText(entry16.as_ptr(), entry16.len() as u32,
                                      self.fnt.p, &r, self.b.p, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT | D2D1_DRAW_TEXT_OPTIONS_CLIP, DWRITE_MEASURING_MODE_NATURAL);
 
                     if sel { self.rt.DrawRectangle(&r, self.sel_b.p, 1.0, null_mut()); }
@@ -264,7 +289,7 @@ impl App {
             OpenClipboard(self.win.hndl);
             EmptyClipboard();
             let global_text = GlobalAlloc(0x0042, 6);
-            let mut tcopy: &mut [u16; 3] = transmute(GlobalLock(global_text));
+            let tcopy: &mut [u16; 3] = transmute(GlobalLock(global_text));
             cp.encode_utf16(tcopy);
             GlobalUnlock(global_text);
             SetClipboardData(CF_UNICODETEXT, global_text);
