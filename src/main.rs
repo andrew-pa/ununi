@@ -45,7 +45,7 @@ fn main() {
         // if not → ask user if want to run at startup
         let mut text = "Do you want ununi to run at startup?".encode_utf16().collect::<Vec<u16>>();
         text.push(0); text.push(0);
-        let res = unsafe { MessageBoxW(null_mut(), text.as_ptr(), [0u16, 0u16].as_ptr(), MB_YESNO) };
+        let res = unsafe { MessageBoxW(null_mut(), text.as_ptr(), [0u16, 0u16].as_ptr(), MB_YESNOCANCEL) };
         if res == 6 /* IDYES */ {
         //          create registry key (running with /S flag)
             let subkey = "Software\\Microsoft\\Windows\\CurrentVersion\\Run".encode_utf16().chain((0..).take(2)).collect::<Vec<u16>>();
