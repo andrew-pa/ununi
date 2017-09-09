@@ -25,14 +25,14 @@ use std::ptr::{null,null_mut};
 use std::mem::{uninitialized, transmute,size_of};
 
 /* Things left to do
- * + Make install not wack (automated)
- * + Rustfmt & manual refactor
+ * + refactor, fix warnings - v0.5
+ * + Restore clipboard after hijack - on demand, v0.6
+ * + Configuration file: hotkey, colors perhaps - v0.6
+ * + Recently used list - v0.7+
+ * + Proper DPI handling (esp wrt multi-mon) - v0.7+
+ * ✓ Make install not wack (automated)
  * ✓ Better Error handling
- * + Recently used list
- * + Proper DPI handling (esp wrt multi-mon)
  * ✓ Cursor in search box (maybe a magnifying glass to hint that's the search box too?)
- * + Restore clipboard after hijack
- * + Configuration file? basically hotkey??? colors perhaps
  */
 
 #[repr(C)] #[derive(Clone,Copy,Debug)]
