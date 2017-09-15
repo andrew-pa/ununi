@@ -34,8 +34,8 @@ background = [0.1, 0.1, 0.1]
 
 ## Technical Notes
 
-Ununi uses the clipboard to get characters into applications. This includes sending them the Ctrl-V paste shortcut. It does not yet restore the clipboard contents, all though that can be useful if you want to type the same character multiple times. Windows' Unicode support is not exactly fantastic so this seems to be the best way to go about it. Pressing Ctrl+Enter will send the character one UTF-16 codepoint at a time through WM_CHAR messages, which does work for some applications but is notably very janky.
+Ununi uses the clipboard to get characters into applications. This includes sending them the Ctrl-V paste shortcut. It does not yet restore the clipboard contents, although that can be useful if you want to type the same character multiple times. Windows' Unicode support is not exactly fantastic so this seems to be the best way to go about it. Pressing Ctrl+Enter will send the character one UTF-16 codepoint at a time through WM_CHAR messages, which does work for some applications but is notably very janky.
 
-Pressing Pause/Break while Ununi is open will kill the process. It can be restarted by rerunning the executable although it will again query if you want it to run on startup. Pressing NO does not yet actually change anything in this case. If you do not want it to show the message box or, passing the `/S` command line flag will disable it.
+Pressing Pause/Break while Ununi is open will kill the process. It can be restarted by rerunning the executable although it will again query if you want it to run on startup. Pressing NO does not yet actually change anything in this case. If you do not want it to show the message box, passing the `/S` command line flag will disable it.
 
-The query is feed directly into Tantivy, the query language is documented [here](https://tantivy-search.github.io/tantivy/tantivy/query/struct.QueryParser.html).
+The query is fed directly into Tantivy, the query language is documented [here](https://tantivy-search.github.io/tantivy/tantivy/query/struct.QueryParser.html).
