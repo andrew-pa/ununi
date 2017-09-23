@@ -1,6 +1,6 @@
 # ununi
 
-Ununi is a utility for Windows that allows you to search for and insert Unicode characters. 
+Ununi is a utility for **Windows 10** that allows you to search for and insert Unicode characters. 
 
 ## Installation
 
