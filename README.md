@@ -4,7 +4,7 @@ Ununi is a utility for Windows that allows you to search for and insert Unicode 
 
 ## Installation
 
-Either download a release build or build from source with `cargo`. Running the executable will download the Unicode character reference, build the search index, and prompt to ask if you would like Ununi to start on startup/login for your user account. 
+Either download a release build (they seem to be **Windows 10** only as that is where they were built) or build from source with `cargo`. Running the executable will download the Unicode character reference, build the search index, and prompt to ask if you would like Ununi to start on startup/login for your user account. 
 
 ## Usage
 
@@ -37,8 +37,8 @@ font = "Consolas"
 
 ## Technical Notes
 
-Ununi uses the clipboard to get characters into applications. This includes sending them the Ctrl-V paste shortcut. It does not yet restore the clipboard contents, all though that can be useful if you want to type the same character multiple times. Windows' Unicode support is not exactly fantastic so this seems to be the best way to go about it. Pressing Ctrl+Enter will send the character one UTF-16 codepoint at a time through WM_CHAR messages, which does work for some applications but is notably very janky.
+Ununi uses the clipboard to get characters into applications. This includes sending them the Ctrl-V paste shortcut. It does not yet restore the clipboard contents, although that can be useful if you want to type the same character multiple times. Windows' Unicode support is not exactly fantastic so this seems to be the best way to go about it. Pressing Ctrl+Enter will send the character one UTF-16 codepoint at a time through WM_CHAR messages, which does work for some applications but is notably very janky.
 
-Pressing Pause/Break while Ununi is open will kill the process. It can be restarted by rerunning the executable although it will again query if you want it to run on startup. Pressing NO does not yet actually change anything in this case. If you do not want it to show the message box or, passing the `/S` command line flag will disable it.
+Pressing Pause/Break while Ununi is open will kill the process. It can be restarted by rerunning the executable although it will again query if you want it to run on startup. Pressing NO does not yet actually change anything in this case. If you do not want it to show the message box, passing the `/S` command line flag will disable it.
 
-The query is feed directly into Tantivy, the query language is documented [here](https://tantivy-search.github.io/tantivy/tantivy/query/struct.QueryParser.html).
+The query is fed directly into Tantivy, the query language is documented [here](https://tantivy-search.github.io/tantivy/tantivy/query/struct.QueryParser.html).
