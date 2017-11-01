@@ -3,7 +3,7 @@ use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::BufReader;
 use std::error::Error;
-use std::io::{Cursor, ErrorKind as IOErrorKind, copy, Seek, SeekFrom};
+use std::io::{Cursor, ErrorKind as IOErrorKind, copy, Seek, SeekFrom, Read, Write};
 
 use tantivy::Error as TError;
 use tantivy::ErrorKind as TErrorKind;
@@ -141,6 +141,8 @@ fn color_from_value(tv: &TomlValue, a: f32) -> Option<D2D1_COLOR_F> {
                                                 .map(|b| D2D1_COLOR_F{r: r as f32, g: g as f32, b: b as f32, a: a}))))
 }
 
+const INDEX_VERSION: u32 = 4;
+
 impl App {
     pub fn new(config: &Option<TomlValue>) -> Result<App, Box<Error>> {
         let mut fac = Factory::new()?;//.expect("creating Direct2D factory");
@@ -165,13 +167,43 @@ impl App {
         let b = Brush::solid_color(rt.clone(), main_color)?;//.expect("creating solid color brush");
         let sel_b = Brush::solid_color(rt.clone(), sel_color)?;//.expect("creating solid color brush");
         let txf = TextFactory::new().expect("creating DWrite factory");
-        let fnt = Font::new(txf.clone(), String::from("Consolas"), 
+        let fnt = Font::new(txf.clone(), String::from(config.as_ref().and_then(|c| c.get("font")).and_then(|v| v.as_str()).unwrap_or("Consolas")), 
                             DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, 16.0)?;//.expect("creating font");
         let mut schb = SchemaBuilder::default();
         let namef = schb.add_text_field("name", TEXT | STORED);
         let blckf = schb.add_text_field("blck", TEXT | STORED);
         let cpnf = schb.add_u64_field("codepnt", INT_STORED);
         let schema = schb.build();
+        match fs::OpenOptions::new().read(true).write(true).open("./index_version") {
+            Ok(mut f) => {
+                let mut s = String::new();
+                f.read_to_string(&mut s)?;
+                if s.parse::<u32>()? < INDEX_VERSION {
+                    match fs::remove_dir_all("./index") {
+                        Ok(()) => {},
+                        Err(e) => match e.kind() {
+                            IOErrorKind::NotFound => {},
+                            _ => return Err(Box::new(e))
+                        }
+                    }
+                    write!(f, "{}", INDEX_VERSION)?;
+                }
+            },
+            Err(e) => match e.kind() {
+                IOErrorKind::NotFound => {
+                    let mut f = File::create("./index_version")?;
+                    write!(f, "{}", INDEX_VERSION)?;
+                    match fs::remove_dir_all("./index") {
+                        Ok(()) => {},
+                        Err(e) => match e.kind() {
+                            IOErrorKind::NotFound => {},
+                            _ => return Err(Box::new(e))
+                        }
+                    }
+                }
+                _ => return Err(Box::new(e))
+            }
+        };
         let index = match Index::open(Path::new("./index")) {
             Ok(ix) => ix,
             Err(TError(TErrorKind::PathDoesNotExist(_), _)) => {
@@ -191,7 +223,7 @@ impl App {
         Ok(App {
             win, factory: fac, rt, b, sel_b, txf, fnt, query_string: String::from(""), sel_char: 0, cursor: 0,
             namef, blckf, cpnf, index: index,
-            qpar: QueryParser::new(schema.clone(), vec![namef, blckf]),
+            qpar: QueryParser::new(schema.clone(), vec![namef, blckf], ::tantivy::analyzer::AnalyzerManager::default()),
             background_color: bg_color,
             last_query: None, foreground_window: None, ctrl_pressed: false
         })

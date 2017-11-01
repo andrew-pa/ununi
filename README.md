@@ -12,7 +12,7 @@ By default Ununi is configured to open with the Alt+F1 hotkey. Typing will then 
 
 ## Configuration
 
-You can configure the hotkey that Ununi uses and the colors by editing a configuration file (not there by default) in `%APPDATA%\ununi\config.toml`. After changing the configuration you must restart Ununi. A sample configuration with notes is given below, it gives the defaults that would be used if the file does not exist. Any key/table can be left out and the default will be used.
+You can configure the hotkey that Ununi uses and the colors and font by editing a configuration file (not there by default) in `%APPDATA%\ununi\config.toml`. After changing the configuration you must restart Ununi. A sample configuration with notes is given below, it gives the defaults that would be used if the file does not exist. Any key/table can be left out and the default will be used.
 
 ```toml
 # configure the hotkey
@@ -30,6 +30,9 @@ main = [0.9, 0.9, 0.9]
 highlight = [0.9, 0.8, 0.6]
 # background color
 background = [0.1, 0.1, 0.1]
+
+# the font used
+font = "Consolas"
 ```
 
 ## Technical Notes
