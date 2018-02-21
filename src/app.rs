@@ -60,7 +60,9 @@ pub struct App {
     b: Brush, sel_b: Brush,
     txf: TextFactory,
     fnt: Font,
-    query_string: String, sel_char: usize, cursor: usize,
+    query_string: String,
+    sel_char: usize, res_window: usize,
+    cursor: usize,
 
     namef: Field, blckf: Field, cpnf: Field,
     index: Index, 
@@ -141,7 +143,8 @@ fn color_from_value(tv: &TomlValue, a: f32) -> Option<D2D1_COLOR_F> {
                                                 .map(|b| D2D1_COLOR_F{r: r as f32, g: g as f32, b: b as f32, a: a}))))
 }
 
-const INDEX_VERSION: u32 = 4;
+const INDEX_VERSION: u32 = 5;
+const VISIBLE_ITEMS: usize = 20;
 
 impl App {
     pub fn new(config: &Option<TomlValue>) -> Result<App, Box<Error>> {
@@ -221,9 +224,9 @@ impl App {
         };
         index.load_searchers()?;//.expect("loading searchers");
         Ok(App {
-            win, factory: fac, rt, b, sel_b, txf, fnt, query_string: String::from(""), sel_char: 0, cursor: 0,
+            win, factory: fac, rt, b, sel_b, txf, fnt, query_string: String::from(""), sel_char: 0, cursor: 0, res_window: 0,
             namef, blckf, cpnf, index: index,
-            qpar: QueryParser::new(schema.clone(), vec![namef, blckf], ::tantivy::analyzer::AnalyzerManager::default()),
+            qpar: QueryParser::new(schema.clone(), vec![namef, blckf], ::tantivy::tokenizer::TokenizerManager::default()),
             background_color: bg_color,
             last_query: None, foreground_window: None, ctrl_pressed: false
         })
@@ -257,7 +260,7 @@ impl App {
         match self.last_query {
             Some(ref das) => {
                 let sel_char = self.sel_char;
-                for (rd,sel) in das.iter().zip((0..).map(|i| i == sel_char)) {
+                for (rd,sel) in das.iter().zip((0..).map(|i| i == sel_char)).skip(self.res_window).take(VISIBLE_ITEMS) {
                     let cp = rd.get_first(self.cpnf).unwrap().u64_value();
                     let entry = format!("{}: {} - {}", ::std::char::from_u32(cp as u32).unwrap_or(' '),
                             rd.get_first(self.namef).unwrap().text(),
@@ -287,10 +290,10 @@ impl App {
             Ok(v) => v,
             Err(_) => { return; }
         };
-        let s = self.index.searcher(); let mut tpc = TopCollector::with_limit(20);
+        let s = self.index.searcher(); let mut tpc = TopCollector::with_limit(40);
         s.search(&*q, &mut tpc).expect("searching index");
         self.last_query = Some(tpc.docs().iter().map(|da| s.doc(&da).unwrap()).collect());
-        self.sel_char = 0;
+        self.sel_char = 0; self.res_window = 0;
     }
 
     unsafe fn hotkey(&mut self) {
@@ -376,15 +379,29 @@ impl App {
             VK_ESCAPE => { 
                 self.query_string = String::new();
                 self.sel_char = 0;
+                self.res_window = 0;
                 self.cursor = 0;
                 ShowWindow(self.win.hndl, SW_HIDE); 0 
             },
             VK_CONTROL => {self.ctrl_pressed = true; 0},
             VK_RETURN => { let ctlp = self.ctrl_pressed; self.send_selected_char(!ctlp) },
-            VK_UP => { if self.sel_char > 0 { self.sel_char -= 1; } 0 },
+            VK_UP => {
+                if self.sel_char > 0 { self.sel_char -= 1; }
+                if self.res_window > 0 && self.sel_char < self.res_window {
+                    self.res_window -= 2;
+                }
+                0
+            },
             VK_DOWN => {
                 match self.last_query.as_ref() {
-                    Some(q) => { if self.sel_char < q.len() { self.sel_char += 1; } },
+                    Some(q) => {
+                        if self.sel_char < q.len()-1 {
+                            if self.sel_char < self.res_window+VISIBLE_ITEMS-1 { self.sel_char += 1; }
+                            else if self.res_window < q.len() {
+                                self.res_window += 2;
+                            }
+                        }
+                    },
                     None => {}
                 }
                 0
