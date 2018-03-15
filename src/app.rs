@@ -349,9 +349,11 @@ impl App {
         if self.foreground_window != None && self.last_query != None {
             let fw = self.foreground_window.unwrap();
             let cp = self.last_query.as_ref()
-                .and_then(|lq| lq[self.sel_char].get_first(self.cpnf).map(Value::u64_value))
+                .and_then(|lq| if lq.len() > 0 { lq[self.sel_char].get_first(self.cpnf).map(Value::u64_value) } else { None })
                 .and_then(|cp| ::std::char::from_u32(cp as u32)); 
-            self.send_char(fw, cp.expect("obtain char from query"), use_clipboard);
+            if let Some(cp) = cp {
+                self.send_char(fw, cp, use_clipboard);
+            }
             self.foreground_window = None;
         }
         self.ctrl_pressed = false;
