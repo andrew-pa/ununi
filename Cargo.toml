@@ -4,7 +4,7 @@ version = "0.4.6"
 authors = ["Andrew <andrew.pa@outlook.com>"]
 
 [dependencies]
-tantivy = { git = "https://github.com/tantivy-search/tantivy" }
+tantivy = "0.12" 
 xml-rs = "0.6"
 winapi = "0.2"
 user32-sys = "0.1"

@@ -5,11 +5,9 @@ use std::io::BufReader;
 use std::error::Error;
 use std::io::{Cursor, ErrorKind as IOErrorKind, copy, Seek, SeekFrom, Read, Write};
 
-use tantivy::Error as TError;
-use tantivy::ErrorKind as TErrorKind;
-use tantivy::Index;
+use tantivy::{Index, IndexReader};
 use tantivy::schema::*;
-use tantivy::collector::TopCollector;
+use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
 
 use xml::name::OwnedName;
@@ -36,6 +34,24 @@ use toml::Value as TomlValue;
  * ✓ Better Error handling
  * ✓ Cursor in search box (maybe a magnifying glass to hint that's the search box too?)
  */
+
+#[derive(Debug)]
+struct TError(tantivy::TantivyError);
+
+impl std::error::Error for TError {}
+
+impl std::fmt::Display for TError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+        self.0.fmt(f)
+    }
+}
+
+impl From<tantivy::TantivyError> for TError {
+    fn from(e: tantivy::TantivyError) -> Self {
+        TError(e)
+    }
+}
+
 
 #[repr(C)] #[derive(Clone,Copy,Debug)]
 #[allow(non_snake_case)]
@@ -65,7 +81,7 @@ pub struct App {
     cursor: usize,
 
     namef: Field, blckf: Field, cpnf: Field,
-    index: Index, 
+    index: Index, index_reader: IndexReader, 
     qpar: QueryParser, 
     last_query: Option<Vec<Document>>,
 
@@ -74,12 +90,12 @@ pub struct App {
     background_color: D2D1_COLOR_F
 }
 
-fn build_index(schema: &Schema, index: &Index) -> Result<(), Box<Error>> {
+fn build_index(schema: &Schema, index: &Index) -> Result<(), Box<dyn Error>> {
     let namef = schema.get_field("name").unwrap();
     let blckf = schema.get_field("blck").unwrap();
     let cpnf  = schema.get_field("codepnt").unwrap();
 
-    let mut ixw = index.writer(50_000_000)?;
+    let mut ixw = index.writer(50_000_000).map_err(TError)?;
     let fbr = BufReader::new(match File::open("./ucd.nounihan.grouped.xml") {
         Ok(f) => f,
         Err(e) => match e.kind() {
@@ -131,7 +147,7 @@ fn build_index(schema: &Schema, index: &Index) -> Result<(), Box<Error>> {
             _ => {}
         }
     }
-    ixw.commit()?;//.expect("commiting index changed");
+    ixw.commit().map_err(TError)?;//.expect("commiting index changed");
     Ok(())
 }
 
@@ -147,7 +163,7 @@ const INDEX_VERSION: u32 = 5;
 const VISIBLE_ITEMS: usize = 20;
 
 impl App {
-    pub fn new(config: &Option<TomlValue>) -> Result<App, Box<Error>> {
+    pub fn new(config: &Option<TomlValue>) -> Result<App, Box<dyn Error>> {
         let mut fac = Factory::new()?;//.expect("creating Direct2D factory");
         let mut dpi: (f32, f32) = (0.0, 0.0);
         unsafe { fac.GetDesktopDpi(&mut dpi.0, &mut dpi.1); }
@@ -175,7 +191,7 @@ impl App {
         let mut schb = SchemaBuilder::default();
         let namef = schb.add_text_field("name", TEXT | STORED);
         let blckf = schb.add_text_field("blck", TEXT | STORED);
-        let cpnf = schb.add_u64_field("codepnt", INT_STORED);
+        let cpnf = schb.add_u64_field("codepnt", STORED);
         let schema = schb.build();
         match fs::OpenOptions::new().read(true).write(true).open("./index_version") {
             Ok(mut f) => {
@@ -207,11 +223,12 @@ impl App {
                 _ => return Err(Box::new(e))
             }
         };
-        let index = match Index::open(Path::new("./index")) {
-            Ok(ix) => ix,
-            Err(TError(TErrorKind::PathDoesNotExist(_), _)) => {
-                fs::create_dir("./index")?;//.expect("create index directory");
-                let ix = Index::create(Path::new("./index"), schema.clone())?;//.expect("creating search index");
+        let index = match tantivy::directory::MmapDirectory::open("./index").map_err(tantivy::TantivyError::from).map(|dir| Index::open(dir)) {
+            Ok(ix) => ix.map_err(TError)?,
+            Err(tantivy::TantivyError::PathDoesNotExist(_)) => {
+                println!("x");
+                fs::create_dir("./index")?;
+                let ix = Index::create(tantivy::directory::MmapDirectory::open("./index")?, schema.clone()).map_err(TError)?;
                 if let Err(e) = build_index(&schema, &ix) {
                     fs::remove_dir_all("./index")?;
                     return Err(e);
@@ -219,13 +236,14 @@ impl App {
                 ix
             },
             Err(e) => {
-                return Err(Box::new(e));//panic!("creating index: {:?}", e);
+                println!("y");
+                return Err(Box::new(TError(e)));//panic!("creating index: {:?}", e);
             }
         };
-        index.load_searchers()?;//.expect("loading searchers");
+        let ixreader = index.reader().map_err(TError)?;
         Ok(App {
             win, factory: fac, rt, b, sel_b, txf, fnt, query_string: String::from(""), sel_char: 0, cursor: 0, res_window: 0,
-            namef, blckf, cpnf, index: index,
+            namef, blckf, cpnf, index: index, index_reader: ixreader,
             qpar: QueryParser::new(schema.clone(), vec![namef, blckf], ::tantivy::tokenizer::TokenizerManager::default()),
             background_color: bg_color,
             last_query: None, foreground_window: None, ctrl_pressed: false
@@ -263,8 +281,8 @@ impl App {
                 for (rd,sel) in das.iter().zip((0..).map(|i| i == sel_char)).skip(self.res_window).take(VISIBLE_ITEMS) {
                     let cp = rd.get_first(self.cpnf).unwrap().u64_value();
                     let entry = format!("{}: {} - {}", ::std::char::from_u32(cp as u32).unwrap_or(' '),
-                            rd.get_first(self.namef).unwrap().text(),
-                            rd.get_first(self.blckf).unwrap().text());
+                            rd.get_first(self.namef).unwrap().text().unwrap_or("!"),
+                            rd.get_first(self.blckf).unwrap().text().unwrap_or("!"));
                     let entry16 = entry.encode_utf16().collect::<Vec<u16>>();
                     self.rt.DrawText(entry16.as_ptr(), entry16.len() as u32,
                                      self.fnt.p, &r, self.b.p, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT | D2D1_DRAW_TEXT_OPTIONS_CLIP, DWRITE_MEASURING_MODE_NATURAL);
@@ -290,9 +308,9 @@ impl App {
             Ok(v) => v,
             Err(_) => { return; }
         };
-        let s = self.index.searcher(); let mut tpc = TopCollector::with_limit(40);
-        s.search(&*q, &mut tpc).expect("searching index");
-        self.last_query = Some(tpc.docs().iter().map(|da| s.doc(&da).unwrap()).collect());
+        let s = self.index_reader.searcher(); let mut tpc = TopDocs::with_limit(40);
+        let results = s.search(&*q, &mut tpc).expect("searching index");
+        self.last_query = Some(results.iter().map(|(_, da)| s.doc(*da).unwrap()).collect());
         self.sel_char = 0; self.res_window = 0;
     }
 
