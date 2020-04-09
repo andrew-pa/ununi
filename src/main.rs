@@ -2,9 +2,6 @@
 extern crate tantivy;
 extern crate xml;
 extern crate winapi;
-extern crate user32;
-extern crate kernel32;
-extern crate advapi32;
 extern crate curl;
 extern crate zip;
 extern crate toml;
@@ -12,10 +9,11 @@ extern crate toml;
 mod vgu;
 mod app;
 
-use winapi::*;
-use user32::*;
-use kernel32::*;
-use advapi32::*;
+use winapi::shared::minwindef::*;
+use winapi::um::winuser::*;
+use winapi::um::winnt::*;
+use winapi::um::winreg::*;
+use winapi::um::libloaderapi::GetModuleFileNameW;
 use std::ptr::{null_mut};
 use std::mem::{MaybeUninit, transmute};
 use std::io::{Read, ErrorKind as IOErrorKind};

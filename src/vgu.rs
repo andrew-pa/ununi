@@ -1,7 +1,15 @@
 #![allow(dead_code)]
-use winapi::*;
-use user32::*;
-use kernel32::*;
+use winapi::shared::minwindef::*;
+use winapi::shared::windef::*;
+use winapi::shared::winerror::*;
+use winapi::um::winuser::*;
+use winapi::um::dcommon::{D2D_SIZE_U, D2D1_PIXEL_FORMAT, D2D1_ALPHA_MODE_PREMULTIPLIED };
+use winapi::um::d2d1::*;
+use winapi::um::dwrite::*;
+use winapi::um::errhandlingapi::*;
+use winapi::um::libloaderapi::*;
+use winapi::um::unknwnbase::*;
+use winapi::shared::guiddef::*;
 
 use std::fmt;
 use std::ops;
@@ -153,7 +161,7 @@ impl<T> Com<T> {
     pub fn query_interface<U>(&self, id: IID) -> Result<Com<U>, HResultError> {
         unsafe {
             let mut up: MaybeUninit<*mut U> = MaybeUninit::uninit();
-            (*self.punk).QueryInterface(&id, up.as_mut_ptr() as *mut *mut c_void).into_result(|| Com { punk: self.punk, p: up.assume_init() })
+            (*self.punk).QueryInterface(&id, up.as_mut_ptr() as *mut *mut winapi::ctypes::c_void).into_result(|| Com { punk: self.punk, p: up.assume_init() })
         }
     }
 }
@@ -217,7 +225,7 @@ impl Factory {
         let null_opts: *const D2D1_FACTORY_OPTIONS = null();
         let mut fac: *mut ID2D1Factory = null_mut();
         unsafe {
-            D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &UuidOfID2D1Factory, null_opts, &mut fac).into_result(|| Com::from_ptr(fac))
+            D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &UUID_OF_IDWRITE_FACTORY, null_opts, &mut fac).into_result(|| Com::from_ptr(fac))
         }
     }
 }
@@ -250,7 +258,7 @@ impl WindowRenderTarget {
         let rc = win.client_rect();
         let size = D2D_SIZE_U { width: (rc.right-rc.left) as u32, height: (rc.bottom-rc.top) as u32 };
         let pxfmt = D2D1_PIXEL_FORMAT {
-            format: DXGI_FORMAT_B8G8R8A8_UNORM,
+            format: winapi::shared::dxgiformat::DXGI_FORMAT_B8G8R8A8_UNORM,
             alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED
         };
         let render_props = D2D1_RENDER_TARGET_PROPERTIES {
@@ -327,7 +335,7 @@ impl TextLayout {
             let mut txd = text.encode_utf16().collect::<Vec<u16>>();
             txd.push(0u16);
             txd.push(0u16);
-            fac.CreateTextLayout(txd.as_ptr(), txd.len() as UINT32, f.p, width, height, lo.as_mut_ptr())
+            fac.CreateTextLayout(txd.as_ptr(), txd.len() as u32, f.p, width, height, lo.as_mut_ptr())
                 .into_result(|| Com::from_ptr(lo.assume_init())).map_err(Into::into)
         }
     }

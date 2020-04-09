@@ -16,9 +16,13 @@ use xml::reader::{EventReader, XmlEvent};
 
 use vgu::*;
 
-use winapi::*;
-use user32::*;
-use kernel32::*;
+use winapi::um::winuser::*;
+use winapi::shared::minwindef::*;
+use winapi::shared::windef::*;
+use winapi::um::winbase::*;
+use winapi::um::d2d1::*;
+use winapi::um::dwrite::*;
+use winapi::shared::windowsx::{GET_X_LPARAM, GET_Y_LPARAM};
 use std::ptr::{null_mut};
 use std::mem::{MaybeUninit, transmute,size_of};
 
@@ -53,7 +57,7 @@ impl From<tantivy::TantivyError> for TError {
 }
 
 
-#[repr(C)] #[derive(Clone,Copy,Debug)]
+/*#[repr(C)] #[derive(Clone,Copy)]
 #[allow(non_snake_case)]
 struct GUITHREADINFO {
     cbSize: DWORD,
@@ -67,7 +71,7 @@ struct GUITHREADINFO {
     rcCaret: RECT
 }
 
-extern "system" { fn GetGUIThreadInfo(idThread: DWORD, lpgui: *mut GUITHREADINFO) -> BOOL; }
+extern "system" { fn GetGUIThreadInfo(idThread: DWORD, lpgui: *mut GUITHREADINFO) -> BOOL; }*/
 
 pub struct App {
     pub win: Window,
@@ -285,7 +289,7 @@ impl App {
                             rd.get_first(self.blckf).unwrap().text().unwrap_or("!"));
                     let entry16 = entry.encode_utf16().collect::<Vec<u16>>();
                     self.rt.DrawText(entry16.as_ptr(), entry16.len() as u32,
-                                     self.fnt.p, &r, self.b.p, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT | D2D1_DRAW_TEXT_OPTIONS_CLIP, DWRITE_MEASURING_MODE_NATURAL);
+                                     self.fnt.p, &r, self.b.p, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT | D2D1_DRAW_TEXT_OPTIONS_CLIP, winapi::um::dcommon::DWRITE_MEASURING_MODE_NATURAL);
 
                     if sel { self.rt.DrawRectangle(&r, self.sel_b.p, 1.0, null_mut()); }
                     r.top += 24.0; r.bottom += 24.0;
@@ -315,17 +319,7 @@ impl App {
     }
 
     unsafe fn hotkey(&mut self) {
-        let mut gti: GUITHREADINFO = GUITHREADINFO { 
-            cbSize: size_of::<GUITHREADINFO>() as u32,
-            flags: 0,
-            hwndActive: transmute(0 as usize),
-            hwndFocus: transmute(0 as usize),
-            hwndCapture: transmute(0 as usize),
-            hwndMenuOwner: transmute(0 as usize),
-            hwndMenuSize: transmute(0 as usize),
-            hwndCaret: transmute(0 as usize),
-            rcCaret: RECT{left:0,right:0,top:0,bottom:0}
-        };
+        let mut gti: GUITHREADINFO = GUITHREADINFO::default();
         gti.cbSize = size_of::<GUITHREADINFO>() as u32;
         GetGUIThreadInfo(0, &mut gti);
         self.foreground_window = if !gti.hwndFocus.is_null() { Some(gti.hwndFocus) } else { None };
