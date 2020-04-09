@@ -168,13 +168,15 @@ const VISIBLE_ITEMS: usize = 20;
 
 impl App {
     pub fn new(config: &Option<TomlValue>) -> Result<App, Box<dyn Error>> {
-        let mut fac = Factory::new()?;//.expect("creating Direct2D factory");
+println!("171");
+        let fac = Factory::new()?;//.expect("creating Direct2D factory");
+        println!("173");
         let mut dpi: (f32, f32) = (0.0, 0.0);
         unsafe { fac.GetDesktopDpi(&mut dpi.0, &mut dpi.1); }
         let win = Window::new((((520.0) * (dpi.0 / 96.0)).ceil() as i32,
                 ((520.0) * (dpi.1 / 96.0)).ceil() as i32), Some(winproc))?;//.expect("creating window");
         let rt = WindowRenderTarget::new(fac.clone(), &win)?;//.expect("creating HwndRenderTarget");
-
+println!("177");
         let (main_color, sel_color, bg_color) = {
             let colors = config.as_ref().and_then(|c| c.get("colors"));
             (colors.as_ref().and_then(|c| c.get("main"))

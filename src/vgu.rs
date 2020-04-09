@@ -3,6 +3,7 @@ use winapi::shared::minwindef::*;
 use winapi::shared::windef::*;
 use winapi::shared::winerror::*;
 use winapi::um::winuser::*;
+use winapi::Interface;
 use winapi::um::dcommon::{D2D_SIZE_U, D2D1_PIXEL_FORMAT, D2D1_ALPHA_MODE_PREMULTIPLIED };
 use winapi::um::d2d1::*;
 use winapi::um::dwrite::*;
@@ -209,23 +210,15 @@ impl<T> ops::DerefMut for Com<T> {
 
 
 
-extern "system" {
-	fn D2D1CreateFactory(
-        factoryType: D2D1_FACTORY_TYPE,
-		riid: REFIID, 
-		pFactoryOptions: *const D2D1_FACTORY_OPTIONS,
-        ppIFactory: *mut *mut ID2D1Factory
-    ) -> HRESULT;
-}
-
 pub type Factory = Com<ID2D1Factory>;
 
 impl Factory {
     pub fn new() -> Result<Com<ID2D1Factory>, HResultError> {
         let null_opts: *const D2D1_FACTORY_OPTIONS = null();
-        let mut fac: *mut ID2D1Factory = null_mut();
+        let mut fac: MaybeUninit<*mut ID2D1Factory> = MaybeUninit::uninit();
         unsafe {
-            D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &UUID_OF_IDWRITE_FACTORY, null_opts, &mut fac).into_result(|| Com::from_ptr(fac))
+            D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &ID2D1Factory::uuidof(), null_opts, transmute(fac.as_mut_ptr()))
+                .into_result(|| Com::from_ptr(fac.assume_init()))
         }
     }
 }
@@ -254,7 +247,7 @@ pub type TextLayout = Com<IDWriteTextLayout>;
 pub type WindowRenderTarget = Com<ID2D1HwndRenderTarget>;
 
 impl WindowRenderTarget {
-    pub fn new(mut fct: Factory, win: &Window) -> Result<WindowRenderTarget, HResultError> {
+    pub fn new(fct: Factory, win: &Window) -> Result<WindowRenderTarget, HResultError> {
         let rc = win.client_rect();
         let size = D2D_SIZE_U { width: (rc.right-rc.left) as u32, height: (rc.bottom-rc.top) as u32 };
         let pxfmt = D2D1_PIXEL_FORMAT {
@@ -288,7 +281,7 @@ impl WindowRenderTarget {
 
 
 impl Brush {
-    pub fn solid_color(mut rt: WindowRenderTarget, col: D2D1_COLOR_F) -> Result<Brush, HResultError> {
+    pub fn solid_color(rt: WindowRenderTarget, col: D2D1_COLOR_F) -> Result<Brush, HResultError> {
         unsafe {
             let mut brsh: *mut ID2D1SolidColorBrush = null_mut();
             rt.CreateSolidColorBrush(&col, null_mut(), &mut brsh).into_result(|| Com::from_ptr(transmute(brsh)))
@@ -298,24 +291,18 @@ impl Brush {
 
 pub type TextFactory = Com<IDWriteFactory>;
 
-//"b859ee5a-d838-4b5b-a2e8-1adc.7d93db48"
-const UUID_OF_IDWRITE_FACTORY: IID = GUID { Data1: 0xb859ee5a, Data2: 0xd838, Data3: 0x4b5b, Data4: [0xa2,0xe8,0x1a,0xdc,0x7d,0x93,0xdb,0x48] }; 
-extern "system" {
-    fn DWriteCreateFactory(factoryType: DWRITE_FACTORY_TYPE, iid: REFIID, factory: *mut *mut IUnknown) -> HRESULT;
-}
-
 impl TextFactory {
     pub fn new() -> Result<TextFactory, HResultError> {
         unsafe {
             let mut fac : MaybeUninit<*mut IDWriteFactory> = MaybeUninit::uninit();
-            DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, &UUID_OF_IDWRITE_FACTORY, transmute(fac.as_mut_ptr())).into_result(|| Com::from_ptr(fac.assume_init()))
+            DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, &IDWriteFactory::uuidof(), transmute(fac.as_mut_ptr())).into_result(|| Com::from_ptr(fac.assume_init()))
         }
     }
 }
 
 
 impl Font {
-    pub fn new(mut fac: TextFactory, name: String, weight: DWRITE_FONT_WEIGHT, style: DWRITE_FONT_STYLE, size: f32) -> Result<Font, HResultError> {
+    pub fn new(fac: TextFactory, name: String, weight: DWRITE_FONT_WEIGHT, style: DWRITE_FONT_STYLE, size: f32) -> Result<Font, HResultError> {
         unsafe {
             let mut txf: MaybeUninit<*mut IDWriteTextFormat> = MaybeUninit::uninit();
             let mut wname = name.encode_utf16().collect::<Vec<u16>>();
@@ -329,7 +316,7 @@ impl Font {
 }
 
 impl TextLayout {
-    pub fn new(mut fac: TextFactory, text: &str, f: &Font, width: f32, height: f32) -> Result<TextLayout, Box<dyn Error>> {
+    pub fn new(fac: TextFactory, text: &str, f: &Font, width: f32, height: f32) -> Result<TextLayout, Box<dyn Error>> {
         unsafe {
             let mut lo: MaybeUninit<*mut IDWriteTextLayout> = MaybeUninit::uninit();
             let mut txd = text.encode_utf16().collect::<Vec<u16>>();

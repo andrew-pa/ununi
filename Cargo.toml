@@ -1,6 +1,6 @@
 [package]
 name = "ununi"
-version = "0.4.8"
+version = "0.4.9"
 authors = ["Andrew Palmer <andrew.pa@outlook.com>"]
 
 [dependencies]
