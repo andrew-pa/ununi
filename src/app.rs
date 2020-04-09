@@ -315,15 +315,26 @@ impl App {
     }
 
     unsafe fn hotkey(&mut self) {
-        let mut gti: GUITHREADINFO = uninitialized();
+        let mut gti: GUITHREADINFO = GUITHREADINFO { 
+            cbSize: size_of::<GUITHREADINFO>() as u32,
+            flags: 0,
+            hwndActive: transmute(0 as usize),
+            hwndFocus: transmute(0 as usize),
+            hwndCapture: transmute(0 as usize),
+            hwndMenuOwner: transmute(0 as usize),
+            hwndMenuSize: transmute(0 as usize),
+            hwndCaret: transmute(0 as usize),
+            rcCaret: RECT{left:0,right:0,top:0,bottom:0}
+        };
         gti.cbSize = size_of::<GUITHREADINFO>() as u32;
         GetGUIThreadInfo(0, &mut gti);
         self.foreground_window = if !gti.hwndFocus.is_null() { Some(gti.hwndFocus) } else { None };
 
         self.update_query(); 
 
-        let mut frc: RECT = uninitialized();
-        GetWindowRect(gti.hwndFocus, &mut frc);
+        let mut frc: MaybeUninit<RECT> = MaybeUninit::uninit();
+        GetWindowRect(gti.hwndFocus, frc.as_mut_ptr());
+        let frc = frc.assume_init();
         SetWindowPos(self.win.hndl, transmute(-1 as isize), frc.left + gti.rcCaret.left, frc.top + gti.rcCaret.bottom+4, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
         ShowWindow(self.win.hndl, SW_RESTORE);
         SetForegroundWindow(self.win.hndl);
