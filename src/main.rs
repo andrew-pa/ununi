@@ -17,7 +17,7 @@ use user32::*;
 use kernel32::*;
 use advapi32::*;
 use std::ptr::{null_mut};
-use std::mem::{uninitialized, transmute};
+use std::mem::{MaybeUninit, transmute};
 use std::io::{Read, ErrorKind as IOErrorKind};
 use std::env;
 use toml::Value as TomlValue;
@@ -54,8 +54,9 @@ fn main() {
             let cmdline = String::from_utf16(&module_path[0..path_len]).expect("decode module path") + " /S";
             let value = cmdline.encode_utf16().chain((0..).take(2)).collect::<Vec<u16>>();
             unsafe {
-                let mut key: HKEY = uninitialized();
-                RegCreateKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, null_mut(), 0, KEY_WRITE, null_mut(), transmute(&mut key), null_mut());
+                let mut key: MaybeUninit<HKEY> = MaybeUninit::uninit();
+                RegCreateKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, null_mut(), 0, KEY_WRITE, null_mut(), key.as_mut_ptr(), null_mut());
+                let key = key.assume_init();
                 RegSetValueExW(key, [b'u' as u16, 0u16, 0u16].as_ptr(), 0, REG_SZ, value.as_ptr() as *mut u8, (value.len()*2) as u32);
                 RegCloseKey(key);
             }
@@ -65,7 +66,7 @@ fn main() {
     let config = match ::std::fs::File::open("config.toml") {
         Ok(mut f) => {
             let mut config_text = String::new();
-            f.read_to_string(&mut config_text);
+            f.read_to_string(&mut config_text).unwrap();
             match config_text.parse::<TomlValue>() {
                 Ok(c) => Some(c),
                 Err(e) => {
@@ -83,7 +84,7 @@ fn main() {
         }
     };
 
-    let mut app = match app::App::new(&config) {
+    let app = match app::App::new(&config) {
         Ok(v) => v,
         Err(e) => {
             let mut text = format!("Error: {}", e).encode_utf16().collect::<Vec<u16>>();

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use winapi::*;
 use user32::*;
 use kernel32::*;
@@ -6,7 +7,7 @@ use std::fmt;
 use std::ops;
 use std::error::Error;
 use std::ptr::{null_mut, null};
-use std::mem::{size_of, uninitialized, transmute};
+use std::mem::{size_of, MaybeUninit, transmute};
 
 pub struct HResultError {
     res: HRESULT
@@ -119,8 +120,9 @@ impl Window {
 
     pub fn message_loop() {
         unsafe {
-            let mut msg: MSG = uninitialized();
-            while GetMessageW(&mut msg, null_mut(), 0, 0) != 0 {
+            let mut msg: MaybeUninit<MSG> = MaybeUninit::uninit();
+            while GetMessageW(msg.as_mut_ptr(), null_mut(), 0, 0) != 0 {
+                let msg = msg.assume_init();
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
@@ -150,8 +152,8 @@ impl<T> Com<T> {
 
     pub fn query_interface<U>(&self, id: IID) -> Result<Com<U>, HResultError> {
         unsafe {
-            let mut up: *mut U = uninitialized();
-            (*self.punk).QueryInterface(&id, (&mut up as *mut *mut U) as *mut *mut c_void).into_result(|| Com { punk: self.punk, p: up })
+            let mut up: MaybeUninit<*mut U> = MaybeUninit::uninit();
+            (*self.punk).QueryInterface(&id, up.as_mut_ptr() as *mut *mut c_void).into_result(|| Com { punk: self.punk, p: up.assume_init() })
         }
     }
 }
@@ -289,7 +291,7 @@ impl Brush {
 pub type TextFactory = Com<IDWriteFactory>;
 
 //"b859ee5a-d838-4b5b-a2e8-1adc.7d93db48"
-const UuidOfIDWriteFactory: IID = GUID { Data1: 0xb859ee5a, Data2: 0xd838, Data3: 0x4b5b, Data4: [0xa2,0xe8,0x1a,0xdc,0x7d,0x93,0xdb,0x48] }; 
+const UUID_OF_IDWRITE_FACTORY: IID = GUID { Data1: 0xb859ee5a, Data2: 0xd838, Data3: 0x4b5b, Data4: [0xa2,0xe8,0x1a,0xdc,0x7d,0x93,0xdb,0x48] }; 
 extern "system" {
     fn DWriteCreateFactory(factoryType: DWRITE_FACTORY_TYPE, iid: REFIID, factory: *mut *mut IUnknown) -> HRESULT;
 }
@@ -297,8 +299,8 @@ extern "system" {
 impl TextFactory {
     pub fn new() -> Result<TextFactory, HResultError> {
         unsafe {
-            let fac : *mut IDWriteFactory = uninitialized();
-            DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, &UuidOfIDWriteFactory, transmute(&fac)).into_result(|| Com::from_ptr(transmute(fac)))
+            let mut fac : MaybeUninit<*mut IDWriteFactory> = MaybeUninit::uninit();
+            DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, &UUID_OF_IDWRITE_FACTORY, transmute(fac.as_mut_ptr())).into_result(|| Com::from_ptr(fac.assume_init()))
         }
     }
 }
@@ -307,41 +309,42 @@ impl TextFactory {
 impl Font {
     pub fn new(mut fac: TextFactory, name: String, weight: DWRITE_FONT_WEIGHT, style: DWRITE_FONT_STYLE, size: f32) -> Result<Font, HResultError> {
         unsafe {
-            let mut txf: *mut IDWriteTextFormat = uninitialized();
+            let mut txf: MaybeUninit<*mut IDWriteTextFormat> = MaybeUninit::uninit();
             let mut wname = name.encode_utf16().collect::<Vec<u16>>();
             wname.push(0u16);
             wname.push(0u16);
             fac.CreateTextFormat(wname.as_ptr(), null_mut(), 
                                  weight, style, DWRITE_FONT_STRETCH_NORMAL, size, 
-                                 [0u16].as_ptr(), &mut txf).into_result(|| Com::from_ptr(txf))
+                                 [0u16].as_ptr(), txf.as_mut_ptr()).into_result(|| Com::from_ptr(txf.assume_init()))
         }
     }
 }
 
 impl TextLayout {
-    pub fn new(mut fac: TextFactory, text: &str, f: &Font, width: f32, height: f32) -> Result<TextLayout, Box<Error>> {
-        use std::mem::transmute;
+    pub fn new(mut fac: TextFactory, text: &str, f: &Font, width: f32, height: f32) -> Result<TextLayout, Box<dyn Error>> {
         unsafe {
-            let mut lo: *mut IDWriteTextLayout = uninitialized();
+            let mut lo: MaybeUninit<*mut IDWriteTextLayout> = MaybeUninit::uninit();
             let mut txd = text.encode_utf16().collect::<Vec<u16>>();
             txd.push(0u16);
             txd.push(0u16);
-            fac.CreateTextLayout(txd.as_ptr(), txd.len() as UINT32, f.p, width, height, &mut lo)
-                .into_result(|| Com::from_ptr(transmute(lo))).map_err(Into::into)
+            fac.CreateTextLayout(txd.as_ptr(), txd.len() as UINT32, f.p, width, height, lo.as_mut_ptr())
+                .into_result(|| Com::from_ptr(lo.assume_init())).map_err(Into::into)
         }
     }
     pub fn bounds(&self) -> D2D1_RECT_F {
         unsafe {
-            let mut metrics: DWRITE_TEXT_METRICS = uninitialized();
-            (*self.p).GetMetrics(&mut metrics);
+            let mut metrics: MaybeUninit<DWRITE_TEXT_METRICS> = MaybeUninit::uninit();
+            (*self.p).GetMetrics(metrics.as_mut_ptr());
+            let metrics = metrics.assume_init();
             D2D1_RECT_F { left: metrics.left, top: metrics.top, right: metrics.left+metrics.width, bottom: metrics.top+metrics.height }
         }
     }
     pub fn char_bounds(&self, index: usize) -> D2D1_RECT_F {
         unsafe {
-            let mut ht: DWRITE_HIT_TEST_METRICS = uninitialized();
+            let mut ht: MaybeUninit<DWRITE_HIT_TEST_METRICS> = MaybeUninit::uninit();
             let (mut x, mut y) = (0.0, 0.0);
-            (*self.p).HitTestTextPosition(index as u32, 0, &mut x, &mut y, &mut ht);
+            (*self.p).HitTestTextPosition(index as u32, 0, &mut x, &mut y, ht.as_mut_ptr());
+            let ht = ht.assume_init();
             D2D1_RECT_F { left: x, top: y, right: x+ht.width, bottom: y+ht.height }
         }
     }
@@ -351,19 +354,19 @@ impl TextLayout {
 mod tests {
 
     use ::vgu::*;
-    use winapi::*;
-    use user32::*;
-    use kernel32::*;
+    
+    
+    
 
     #[test]
     #[ignore] //mutex with create_d2d_window
     fn create_window() {
-        let win = ::vgu::Window::new((200,200), Some(DefWindowProcW)).expect("creating Win32 window");
+        let _win = ::vgu::Window::new((200,200), Some(DefWindowProcW)).expect("creating Win32 window");
     }
 
     #[test]
     fn create_d2d_factory() {
-        let fac = ::vgu::Factory::new().expect("creating Direct2D factory");
+        let _fac = ::vgu::Factory::new().expect("creating Direct2D factory");
     }
 
     #[test]
@@ -371,18 +374,18 @@ mod tests {
         let win = Window::new((200,200), Some(DefWindowProcW)).expect("creating Win32 window");
         let fac = Factory::new().expect("creating Direct2D factory");
         let rt = WindowRenderTarget::new(fac, &win).expect("creating HwndRenderTarget");
-        let bc = Brush::solid_color(rt, D2D1_COLOR_F { r: 0.8, g: 0.5, b: 0.1, a: 1.0 }).expect("creating Solid Color Brush");
+        let _bc = Brush::solid_color(rt, D2D1_COLOR_F { r: 0.8, g: 0.5, b: 0.1, a: 1.0 }).expect("creating Solid Color Brush");
     }
 
     #[test]
     fn create_dwrite_factory() {
-        let fac = TextFactory::new().expect("creating DWrite factory");
+        let _fac = TextFactory::new().expect("creating DWrite factory");
     }
 
     #[test]
     fn create_dwrite_font() {
         let fac = TextFactory::new().expect("creating DWrite factory");
-        let fnt = Font::new(fac.clone(), String::from("Arial"), DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, 64.0).expect("creating Arial font");
+        let _fnt = Font::new(fac.clone(), String::from("Arial"), DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, 64.0).expect("creating Arial font");
     }
 }
 

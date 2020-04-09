@@ -1,4 +1,4 @@
-use std::path::Path;
+
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::BufReader;
@@ -20,7 +20,7 @@ use winapi::*;
 use user32::*;
 use kernel32::*;
 use std::ptr::{null_mut};
-use std::mem::{uninitialized, transmute,size_of};
+use std::mem::{MaybeUninit, transmute,size_of};
 
 use toml::Value as TomlValue;
 
@@ -256,7 +256,7 @@ impl App {
         //self.rt.SetTransform(&identity);
 
         { //draw frame
-            let mut r = D2D1_RECT_F{left: 0.0, right:520.0, top:0.0, bottom:520.0};
+            let r = D2D1_RECT_F{left: 0.0, right:520.0, top:0.0, bottom:520.0};
             self.rt.DrawRectangle(&r, self.sel_b.p, 1.0, null_mut());
         }
 
